@@ -78,6 +78,56 @@ public class AppConfigTests
         Assert.Equal(new AppConfig(), config);
     }
 
+    [Fact]
+    public void SourceGen_RoundTrip_KeepsAllValues_AndPascalCaseNames()
+    {
+        var config = new AppConfig
+        {
+            ServerUrl = "https://immich.example.com/api",
+            ApiKeyProtected = "AQAAANCMnd8=",
+            AlbumName = "VRChat",
+            Visibility = AssetVisibility.Hidden,
+            ExcludePrints = false,
+            UploadLayers = true,
+            StrictFileNames = false,
+            VrcxWaitSeconds = 3,
+            CloseButtonAction = CloseButtonAction.HideToTray,
+            MinimizeButtonAction = MinimizeButtonAction.Tray,
+            StartMinimized = true,
+        };
+        var json = JsonSerializer.Serialize(config, ConfigJsonContext.Default.AppConfig);
+        Assert.Equal(config, JsonSerializer.Deserialize(json, ConfigJsonContext.Default.AppConfig));
+        Assert.Contains("\"ServerUrl\"", json);
+        Assert.Contains("\"hidden\"", json);
+        Assert.Contains("\"HideToTray\"", json);
+        Assert.DoesNotContain("HasAlbum", json);
+        Assert.Contains("\n", json); // indented
+    }
+
+    [Fact]
+    public void SourceGen_MissingFields_UseDefaults()
+    {
+        Assert.Equal(new AppConfig(), JsonSerializer.Deserialize("{}", ConfigJsonContext.Default.AppConfig));
+        Assert.Equal(new AppConfig { AlbumName = "A" },
+            JsonSerializer.Deserialize("{\"AlbumName\":\"A\"}", ConfigJsonContext.Default.AppConfig));
+    }
+
+    [Fact]
+    public void SourceGen_AllowsCommentsAndTrailingCommas()
+    {
+        var config = JsonSerializer.Deserialize("{ // note\n \"VrcxWaitSeconds\": 0, }", ConfigJsonContext.Default.AppConfig);
+        Assert.Equal(0, config!.VrcxWaitSeconds);
+    }
+
+    [Fact]
+    public void ImmichContext_UsesCamelCase()
+    {
+        var dto = JsonSerializer.Deserialize("{\"id\":\"x\",\"status\":\"created\"}", ImmichJsonContext.Default.AssetMediaResponseDto);
+        Assert.Equal("x", dto!.Id);
+        Assert.Equal("created", dto.Status);
+        Assert.Null(JsonSerializer.Deserialize("{\"Id\":\"x\"}", ImmichJsonContext.Default.AssetMediaResponseDto)!.Id);
+    }
+
     [Theory]
     [InlineData(AssetVisibility.Timeline, "timeline")]
     [InlineData(AssetVisibility.Archive, "archive")]

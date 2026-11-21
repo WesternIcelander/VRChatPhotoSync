@@ -204,7 +204,7 @@ How this list works:
 - [x] **ImmichClient core**, with tests: a shared `HttpClient` (base address, `x-api-key`, `Accept`, 5 min timeout, User-Agent), `PingAsync()` and `GetMyApiKeyAsync()` (permission warnings).
 
 ### B. Immich client
-- [ ] **Upload + JSON source generation.** `UploadAsync(content, fileName, sha1, createdAt, modifiedAt)`:
+- [x] **Upload + JSON source generation.** `UploadAsync(content, fileName, sha1, createdAt, modifiedAt)`:
   - Multipart with `assetData` (`image/png`, from a caller-supplied stream or byte buffer, so the worker can upload from a snapshot).
   - Fields `fileCreatedAt`/`fileModifiedAt` (ISO-8601 `"o"` with offset), `filename`, `isFavorite=false`, and `visibility` when it is not `timeline`.
   - Header `x-immich-checksum: <sha1 hex>`.

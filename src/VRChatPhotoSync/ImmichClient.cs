@@ -93,11 +93,8 @@ public sealed class ImmichClient : IDisposable
                 return false;
 
             var body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("res", out var res)
-                && res.ValueKind == JsonValueKind.String
-                && res.GetString() == "pong";
+            var pong = JsonSerializer.Deserialize(body, ImmichJsonContext.Default.PingResponseDto);
+            return pong?.Res == "pong";
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -155,7 +152,207 @@ public sealed class ImmichClient : IDisposable
         }
     }
 
+    /// <summary>Header that lets Immich spot a duplicate from the SHA-1 before reading the whole body.</summary>
+    public const string ChecksumHeader = "x-immich-checksum";
+
+    /// <summary>Most characters of an error body kept in an <see cref="UploadResult"/>.</summary>
+    internal const int MaxErrorBodyLength = 4000;
+
+    /// <summary>
+    /// Uploads a PNG from an in-memory snapshot. See
+    /// <see cref="UploadAsync(Stream, string, string, DateTimeOffset, DateTimeOffset, AssetVisibility, CancellationToken)"/>.
+    /// </summary>
+    public Task<UploadResult> UploadAsync(
+        ReadOnlyMemory<byte> content, string fileName, string sha1, DateTimeOffset createdAt, DateTimeOffset modifiedAt,
+        AssetVisibility visibility = AssetVisibility.Timeline, CancellationToken cancellationToken = default) =>
+        SendUploadAsync(new ReadOnlyMemoryContent(content), fileName, sha1, createdAt, modifiedAt, visibility, cancellationToken);
+
+    /// <summary>
+    /// Uploads a PNG: <c>POST assets</c> as multipart/form-data with <c>assetData</c>
+    /// (<c>image/png</c>, read from <paramref name="content"/>'s current position; the stream is
+    /// left open), <c>fileCreatedAt</c>/<c>fileModifiedAt</c> (ISO-8601 round-trip format with
+    /// offset), <c>filename</c>, <c>isFavorite=false</c>, and <c>visibility</c> unless it is
+    /// <see cref="AssetVisibility.Timeline"/> (the server default). <paramref name="sha1"/> (40 hex
+    /// characters) is sent as <c>x-immich-checksum</c>.
+    /// <para>
+    /// Result: 201 → <see cref="UploadStatus.Created"/>; 200 → <see cref="UploadStatus.Duplicate"/>;
+    /// 401/403 → <see cref="UploadStatus.AuthError"/>; 408, 429, 5xx, a timeout, a network error or
+    /// a success body without an id → <see cref="UploadStatus.Transient"/>; 400 and other statuses →
+    /// <see cref="UploadStatus.Rejected"/> with the response body. Throws
+    /// <see cref="OperationCanceledException"/> only when <paramref name="cancellationToken"/> is cancelled.
+    /// </para>
+    /// </summary>
+    public Task<UploadResult> UploadAsync(
+        Stream content, string fileName, string sha1, DateTimeOffset createdAt, DateTimeOffset modifiedAt,
+        AssetVisibility visibility = AssetVisibility.Timeline, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return SendUploadAsync(new StreamContent(new LeaveOpenStream(content)), fileName, sha1, createdAt, modifiedAt, visibility, cancellationToken);
+    }
+
+    private async Task<UploadResult> SendUploadAsync(
+        HttpContent fileContent, string fileName, string sha1, DateTimeOffset createdAt, DateTimeOffset modifiedAt,
+        AssetVisibility visibility, CancellationToken cancellationToken)
+    {
+        using var form = new MultipartFormDataContent();
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+            if (!IsSha1Hex(sha1))
+                throw new ArgumentException("The checksum must be a SHA-1 as 40 hex characters.", nameof(sha1));
+        }
+        catch
+        {
+            fileContent.Dispose();
+            throw;
+        }
+
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        fileContent.Headers.ContentDisposition = FormData("assetData", fileName);
+        form.Add(fileContent);
+        AddField(form, "fileCreatedAt", FormatDate(createdAt));
+        AddField(form, "fileModifiedAt", FormatDate(modifiedAt));
+        AddField(form, "filename", fileName);
+        AddField(form, "isFavorite", "false");
+        if (visibility != AssetVisibility.Timeline)
+            AddField(form, "visibility", visibility.ToApiValue());
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "assets") { Content = form };
+        request.Headers.Add(ChecksumHeader, sha1.ToLowerInvariant());
+
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var status = (int)response.StatusCode;
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            switch (status)
+            {
+                case 200 or 201:
+                    var id = TryParseAssetId(body);
+                    if (id is null)
+                        return UploadResult.Transient(status, $"Unexpected response body: {Truncate(body)}");
+                    return status == 201 ? UploadResult.Created(id) : UploadResult.Duplicate(id);
+                case 401 or 403:
+                    return UploadResult.AuthError(status, Truncate(body));
+                case 408 or 429 or >= 500:
+                    return UploadResult.Transient(status, Truncate(body));
+                default:
+                    return UploadResult.Rejected(status, Truncate(body));
+            }
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            return UploadResult.Transient(null, $"Timed out: {ex.Message}");
+        }
+        catch (HttpRequestException ex)
+        {
+            return UploadResult.Transient(null, ex.Message);
+        }
+        catch (IOException ex)
+        {
+            return UploadResult.Transient(null, ex.Message);
+        }
+    }
+
+    /// <summary>Formats a date for Immich: ISO-8601 round-trip (<c>"o"</c>), always with an offset.</summary>
+    internal static string FormatDate(DateTimeOffset value) =>
+        value.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static bool IsSha1Hex(string? value) =>
+        value is { Length: 40 } && value.All(char.IsAsciiHexDigit);
+
+    private static string? TryParseAssetId(string body)
+    {
+        try
+        {
+            var dto = JsonSerializer.Deserialize(body, ImmichJsonContext.Default.AssetMediaResponseDto);
+            return string.IsNullOrWhiteSpace(dto?.Id) ? null : dto.Id;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string Truncate(string body) =>
+        body.Length <= MaxErrorBodyLength ? body : body[..MaxErrorBodyLength] + "…";
+
+    private static ContentDispositionHeaderValue FormData(string name, string? fileName = null)
+    {
+        var disposition = new ContentDispositionHeaderValue("form-data") { Name = Quote(name) };
+        if (fileName is not null)
+        {
+            if (fileName.All(c => c is >= ' ' and < (char)127))
+                disposition.FileName = Quote(fileName);
+            else
+                disposition.FileNameStar = fileName;
+        }
+        return disposition;
+
+        static string Quote(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    }
+
+    private static void AddField(MultipartFormDataContent form, string name, string value)
+    {
+        var content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(value));
+        content.Headers.ContentDisposition = FormData(name);
+        form.Add(content);
+    }
+
     public void Dispose() => _http.Dispose();
+
+    /// <summary>Wraps a caller's stream so disposing the request doesn't close it.</summary>
+    private sealed class LeaveOpenStream(Stream inner) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override int Read(Span<byte> buffer) => inner.Read(buffer);
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            inner.ReadAsync(buffer, offset, count, cancellationToken);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}
+
+/// <summary>Outcome of <see cref="ImmichClient.UploadAsync(Stream, string, string, DateTimeOffset, DateTimeOffset, AssetVisibility, CancellationToken)"/>.</summary>
+public enum UploadStatus
+{
+    /// <summary>201: a new asset was created.</summary>
+    Created,
+    /// <summary>200: the server already has this file (by checksum). Counts as success; don't retry.</summary>
+    Duplicate,
+    /// <summary>401/403: the key is wrong or lacks <c>asset.upload</c>. Pause until the user fixes it.</summary>
+    AuthError,
+    /// <summary>The server refused this file (400 or another 4xx). Retrying won't help.</summary>
+    Rejected,
+    /// <summary>5xx, 408/429, timeout, network error or an unreadable success body. Retry later.</summary>
+    Transient,
+}
+
+/// <summary>Result of an upload.</summary>
+/// <param name="Status">What happened.</param>
+/// <param name="AssetId">The Immich asset id for <see cref="UploadStatus.Created"/> and <see cref="UploadStatus.Duplicate"/>.</param>
+/// <param name="HttpStatus">The HTTP status code, or null when there was no response.</param>
+/// <param name="Message">The (truncated) response body or error message for failures.</param>
+public sealed record UploadResult(UploadStatus Status, string? AssetId, int? HttpStatus, string? Message)
+{
+    public static UploadResult Created(string assetId) => new(UploadStatus.Created, assetId, 201, null);
+    public static UploadResult Duplicate(string assetId) => new(UploadStatus.Duplicate, assetId, 200, null);
+    public static UploadResult AuthError(int httpStatus, string? body) => new(UploadStatus.AuthError, null, httpStatus, body);
+    public static UploadResult Rejected(int httpStatus, string? body) => new(UploadStatus.Rejected, null, httpStatus, body);
+    public static UploadResult Transient(int? httpStatus, string? message) => new(UploadStatus.Transient, null, httpStatus, message);
+
+    /// <summary>True for <see cref="UploadStatus.Created"/> and <see cref="UploadStatus.Duplicate"/>.</summary>
+    public bool Succeeded => Status is UploadStatus.Created or UploadStatus.Duplicate;
 }
 
 /// <summary>Outcome of <see cref="ImmichClient.GetMyApiKeyAsync"/>.</summary>
@@ -240,27 +437,14 @@ public sealed record ApiKeyInfo(string? Id, string? Name, IReadOnlyList<string> 
     {
         try
         {
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("permissions", out var perms)
-                || perms.ValueKind != JsonValueKind.Array)
+            var dto = JsonSerializer.Deserialize(body, ImmichJsonContext.Default.ApiKeyResponseDto);
+            if (dto?.Permissions is not { } perms)
                 return null;
-
-            var list = new List<string>();
-            foreach (var p in perms.EnumerateArray())
-            {
-                if (p.ValueKind == JsonValueKind.String && p.GetString() is { } s)
-                    list.Add(s);
-            }
-            return new ApiKeyInfo(GetString(root, "id"), GetString(root, "name"), list);
+            return new ApiKeyInfo(dto.Id, dto.Name, perms.OfType<string>().ToArray());
         }
         catch (JsonException)
         {
             return null;
         }
-
-        static string? GetString(JsonElement obj, string name) =>
-            obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
     }
 }

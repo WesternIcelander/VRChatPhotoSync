@@ -13,12 +13,6 @@ public sealed class ConfigStore
     public const string FileName = "config.json";
     public const string AppDataFolderName = "VRChatPhotoSync";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-    };
 
     private readonly string _exeDirectory;
 
@@ -78,7 +72,7 @@ public sealed class ConfigStore
         try
         {
             var json = File.ReadAllText(path);
-            var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
+            var config = JsonSerializer.Deserialize(json, ConfigJsonContext.Default.AppConfig);
             if (config is null)
                 return new ConfigLoadResult(new AppConfig(), path, Exists: true, Error: "The config file is empty.");
             config = config with { ServerUrl = NormalizeServerUrl(config.ServerUrl) };
@@ -105,7 +99,7 @@ public sealed class ConfigStore
         config = config with { ServerUrl = NormalizeServerUrl(config.ServerUrl) };
 
         System.IO.Directory.CreateDirectory(Directory);
-        var json = JsonSerializer.Serialize(config, JsonOptions);
+        var json = JsonSerializer.Serialize(config, ConfigJsonContext.Default.AppConfig);
         var tempPath = ConfigPath + ".tmp";
         File.WriteAllText(tempPath, json);
         File.Move(tempPath, ConfigPath, overwrite: true);
