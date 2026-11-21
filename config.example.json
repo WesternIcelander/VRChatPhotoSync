@@ -1,0 +1,13 @@
+{
+  "ServerUrl": "https://immich.example.com/api",
+  "ApiKeyProtected": null,
+  "AlbumName": "VRChat",
+  "Visibility": "timeline",
+  "ExcludePrints": true,
+  "UploadLayers": false,
+  "StrictFileNames": true,
+  "VrcxWaitSeconds": 10,
+  "CloseButtonAction": "Exit",
+  "MinimizeButtonAction": "Taskbar",
+  "StartMinimized": false
+}

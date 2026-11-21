@@ -23,4 +23,9 @@
     <ProjectReference Include="..\..\src\VRChatPhotoSync\VRChatPhotoSync.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The shipped example config, checked by ConfigExampleTests. -->
+    <None Include="..\..\config.example.json" Link="config.example.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

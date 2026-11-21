@@ -204,7 +204,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
   - Also return `SplitByDate` (default true) and `Source` (`"VRChat config"` / `"default"` / `"--folder"`) to show in the UI and log.
   - Never throw. Log and use the defaults instead.
 - [x] Parse command-line options `--folder <path>` (overrides the VRChat folder for this run only), `--server <url>`, `--minimized`, `--settings` (force the dialog). Command-line values override the file for that run only.
-- [ ] Ship `config.example.json` with placeholder values (no real paths, URLs or keys).
+- [x] Ship `config.example.json` with placeholder values (no real paths, URLs or keys).
 
 ### 3. Immich API client
 - [ ] `ImmichClient`: one `HttpClient` with a base address, the `x-api-key` header, `Accept: application/json`, a generous timeout for uploads (for example 5 min), and User-Agent `VRChatPhotoSync/<version>`.
