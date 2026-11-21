@@ -262,7 +262,7 @@ How this list works:
   - On `Error`: recreate the watcher and raise `ResyncNeeded`.
   - Missing folder: report a `Waiting for <folder> to exist…` state, poll every 30 s, start when it appears, and never create it.
   - `VRChatConfigWatcher`: watch VRChat's `config.json` directory (debounced). Re-run `VRChatSettings.Load()`, and raise `PictureFolderChanged` when the folder changes. Never write to that file.
-- [ ] **Readiness and VRCX settle**, with fake-clock/probe tests:
+- [x] **Readiness and VRCX settle**, with fake-clock/probe tests:
   - `FileReadiness.WaitUntilReadyAsync`: can be opened and the size is stable across about 500 ms. Give up after about 60 s (the caller re-queues).
   - `VrcxSettle.WaitAsync(path, timeout)`. Return straight away for: a layer file, an existing layer sibling, `HasVrcxMetadata`, timeout 0, or a file more than 2 min old.
   - Otherwise poll every 1 s until: the chunk appears, **a layer sibling appears**, the file changes and stays the same for 2 s, the file is renamed (follow the new path), or the timeout runs out.
