@@ -35,6 +35,8 @@ public sealed class MainForm : Form
     private int _renderPending;
     private bool _rendering;
     private CatchUpScanner? _scanner;
+    private UploadWorker? _worker;
+    private ImmichClientHost? _clientHost;
     private Action? _openServerSettings;
 
     /// <summary>A window with default settings (for the designer and tests).</summary>
@@ -52,6 +54,7 @@ public sealed class MainForm : Form
             startup.Logger)
     {
         Startup = startup;
+        OpenServerSettings = ShowServerSettings;
         ViewModel.SetFolderState(Directory.Exists(startup.VRChat.PictureFolder) ? FolderWatchState.Watching : FolderWatchState.WaitingForFolder);
     }
 
@@ -109,6 +112,7 @@ public sealed class MainForm : Form
     public void Attach(UploadWorker worker)
     {
         ArgumentNullException.ThrowIfNull(worker);
+        _worker = worker;
         worker.StatusChanged += ViewModel.SetWorkerStatus;
         worker.Uploaded += ViewModel.Record;
         worker.Duplicate += ViewModel.Record;
@@ -141,6 +145,69 @@ public sealed class MainForm : Form
     {
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
         _uploadExistingItem.Enabled = true;
+    }
+
+    /// <summary>The Immich client holder, restarted when the server settings are saved.</summary>
+    public void Attach(ImmichClientHost clientHost)
+    {
+        _clientHost = clientHost ?? throw new ArgumentNullException(nameof(clientHost));
+    }
+
+    // ---- Immich server window ----
+
+    /// <summary>Opens the Immich server window (modal).</summary>
+    public void ShowServerSettings()
+    {
+        var vrchat = Startup?.VRChat
+                     ?? new VRChatSettings(PictureFolder ?? "", true, VRChatSettings.SourceDefault, null, []);
+        var scanner = _scanner;
+        Func<CancellationToken, Task<int>>? count = scanner is null ? null : ct => scanner.CountExistingAsync(ct);
+        using var form = new ServerSettingsForm(new ServerSettingsModel(Config.Current), vrchat, ApplyServerSettings, count, Logger);
+        if (Visible)
+            form.ShowDialog(this);
+        else
+            form.ShowDialog();
+    }
+
+    /// <summary>
+    /// Save in the Immich server window: writes the config, restarts the client, resumes uploads paused by a rejected
+    /// key (or cuts a retry wait short), and starts the backfill if "Also upload my existing photos" was ticked. If the
+    /// file can't be written, the settings still apply to this run and the error is passed on for the window to show.
+    /// </summary>
+    internal void ApplyServerSettings(ServerSettingsModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        Exception? saveError = null;
+        try
+        {
+            Config.Update(model.ApplyTo);
+        }
+        catch (Exception ex)
+        {
+            saveError = ex;
+        }
+
+        var config = Config.Current;
+        Logger?.AddSecret(SecretProtector.Unprotect(config.ApiKeyProtected));
+        Logger?.Info($"Server settings saved: {config.ServerUrl}; API key {(model.KeyChanged ? "changed" : "kept")}; " +
+                     $"album {(config.HasAlbum ? $"\"{config.AlbumName}\"" : "none")}; visibility {config.Visibility.ToApiValue()}; " +
+                     $"VRCX wait {config.VrcxWaitSeconds} s; exact names {(config.StrictFileNames ? "on" : "off")}.");
+        var hasClient = _clientHost?.Restart(config);
+        if (hasClient == false)
+            Logger?.Warn("No Immich client: the server URL or API key isn't usable.");
+        _worker?.Resume();
+
+        if (model.UploadExisting && _scanner is not null)
+        {
+            Logger?.Info("Uploading existing photos (chosen on first setup).");
+            if (IsHandleCreated)
+                BeginInvoke(() => _ = RunBackfillAsync(showResult: false));
+            else
+                _ = RunBackfillAsync(showResult: false);
+        }
+
+        if (saveError is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(saveError);
     }
 
     // ---- Rendering ----
@@ -277,13 +344,22 @@ public sealed class MainForm : Form
             AppTitle, MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
         if (answer != DialogResult.OK)
             return;
+        await RunBackfillAsync(showResult: true);
+    }
 
+    /// <summary>Runs "Upload existing photos" with progress in the status line. Failures are always shown.</summary>
+    private async Task RunBackfillAsync(bool showResult)
+    {
+        if (_scanner is null || IsDisposed)
+            return;
         _uploadExistingItem.Enabled = false;
         try
         {
             var progress = new Progress<BackfillProgress>(ViewModel.SetBackfill);
             var result = await _scanner.BackfillAsync(progress);
             ViewModel.SetBackfill(null);
+            if (!showResult && result.Status == BackfillStatus.Ok)
+                return;
             var text = result.Status switch
             {
                 BackfillStatus.NotSetUp => "Set up the Immich server first.",

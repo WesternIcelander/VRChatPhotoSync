@@ -30,6 +30,6 @@ public interface IUploadClient
     Task<ApiResult<IReadOnlyList<BulkCheckResult>>> BulkUploadCheckAsync(IReadOnlyList<BulkCheckItem> items, CancellationToken cancellationToken = default);
 }
 
-public sealed partial class ImmichClient : IUploadClient
+public sealed partial class ImmichClient : IUploadClient, IServerInfoClient
 {
 }

@@ -322,7 +322,7 @@ How this list works:
   - Title `PhotoSync — N uploaded`.
   - All updates go through `BeginInvoke`.
   - Keep the presentation logic in a testable `MainViewModel` (status text, counters) with unit tests. The form only binds to it.
-- [ ] **Immich server window** (`ServerSettingsForm`), as specified in the design section (layout in "Reference: settings window layout" at the end):
+- [x] **Immich server window** (`ServerSettingsForm`), as specified in the design section (layout in "Reference: settings window layout" at the end):
   - URL (accepts with or without `/api`).
   - API key: password box + Show toggle. A saved key is never shown again; blank = keep. Trim whitespace.
   - "How do I get an API key?" link → `<server root>/user-settings?isOpen=api-keys` (tooltip with the manual route; Immich docs if no URL yet), plus the list of required permissions.
