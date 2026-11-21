@@ -16,6 +16,15 @@ public interface IUploadClient
 
     /// <summary>Adds assets to an album (already in the album counts as success).</summary>
     Task<ApiResult<AlbumAddResult>> AddToAlbumAsync(string albumId, IReadOnlyCollection<string> assetIds, CancellationToken cancellationToken = default);
+
+    /// <summary>The key's permissions (<c>GET api-keys/me</c>), to decide whether a late-edited photo can replace its old asset.</summary>
+    Task<ApiKeyCheckResult> GetMyApiKeyAsync(string? albumName = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Copies albums, favourite etc. from the old asset to its replacement (<c>PUT assets/copy</c>).</summary>
+    Task<ApiResult> CopyAssetAsync(string sourceId, string targetId, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves assets to the trash (never forced).</summary>
+    Task<ApiResult> TrashAssetsAsync(IReadOnlyCollection<string> assetIds, CancellationToken cancellationToken = default);
 }
 
 public sealed partial class ImmichClient : IUploadClient

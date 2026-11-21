@@ -14,6 +14,11 @@ public enum UploadOutcome
     Skipped,
     /// <summary>The server refused the file, or it couldn't be processed.</summary>
     Failed,
+    /// <summary>
+    /// A file that was already uploaded changed (VRCX added its metadata late) and its new version was uploaded.
+    /// Not counted as a new upload.
+    /// </summary>
+    Updated,
 }
 
 /// <summary>Why a file wasn't uploaded.</summary>
@@ -33,9 +38,12 @@ public enum SkipReason
 /// <param name="RelativePath">The path relative to the picture folder (the <c>state.json</c> key).</param>
 /// <param name="AssetId">The Immich asset id for <see cref="UploadOutcome.Uploaded"/> and <see cref="UploadOutcome.Duplicate"/>.</param>
 /// <param name="Skip">The reason for <see cref="UploadOutcome.Skipped"/>.</param>
-/// <param name="Detail">The error message for <see cref="UploadOutcome.Failed"/>.</param>
+/// <param name="Detail">The error message for <see cref="UploadOutcome.Failed"/>, or the text to show for <see cref="UploadOutcome.Updated"/>.</param>
+/// <param name="PreviousAssetId">For <see cref="UploadOutcome.Updated"/>: the asset of the version uploaded before.</param>
+/// <param name="Replaced">For <see cref="UploadOutcome.Updated"/>: true when the old asset was copied to the new one and trashed.</param>
 public sealed record UploadEvent(
-    UploadOutcome Outcome, string Path, string RelativePath, string? AssetId = null, SkipReason? Skip = null, string? Detail = null);
+    UploadOutcome Outcome, string Path, string RelativePath, string? AssetId = null, SkipReason? Skip = null, string? Detail = null,
+    string? PreviousAssetId = null, bool Replaced = false);
 
 /// <summary>What the worker is doing right now.</summary>
 public enum WorkerState
@@ -76,6 +84,11 @@ public sealed record WorkerStatus(WorkerState State, string Text, string? File =
 /// <see cref="UploadStatus.Rejected"/> file is logged and counted as failed.
 /// </para>
 /// <para>
+/// Renames (<see cref="NotifyRenamed"/>) follow a file wherever it is: queued, in the pipeline, or in the state. A file in
+/// the state that changed is uploaded again; when that creates a new asset, the old one is replaced (copy, then trash)
+/// if the key allows it, and the file is reported as <see cref="UploadOutcome.Updated"/>, not as a new upload.
+/// </para>
+/// <para>
 /// The settings are read through a delegate for every file, so a checkbox change applies to the next file. The
 /// <see cref="UploadState"/> is shared; every access to it from outside must hold <see cref="StateLock"/>.
 /// </para>
@@ -102,6 +115,14 @@ public sealed class UploadWorker
     private readonly FileReadiness _readiness;
     private readonly Func<string, bool> _isPrint;
     private readonly Func<string, byte[]> _readFile;
+
+    /// <summary>A file in the pipeline. <see cref="Path"/> follows renames; guarded by <see cref="StateLock"/>.</summary>
+    private sealed class Tracked(string path)
+    {
+        public string Path = path;
+    }
+
+    private readonly List<Tracked> _inFlight = []; // guarded by StateLock
 
     private readonly object _statusLock = new();
     private WorkerStatus _status = WorkerStatus.Idle;
@@ -183,6 +204,9 @@ public sealed class UploadWorker
     /// <summary>The file was rejected by the server or couldn't be processed.</summary>
     public event Action<UploadEvent>? Failed;
 
+    /// <summary>An already uploaded file changed and its new version was uploaded (<see cref="UploadOutcome.Updated"/>).</summary>
+    public event Action<UploadEvent>? Updated;
+
     /// <summary>The status changed. Raised on a worker thread; the UI must marshal it.</summary>
     public event Action<WorkerStatus>? StatusChanged;
 
@@ -212,6 +236,59 @@ public sealed class UploadWorker
     }
 
     /// <summary>
+    /// Handles <see cref="FolderWatcher.FileRenamed"/>. A file waiting in the queue, being checked or settled, or
+    /// waiting to upload continues under <paramref name="newPath"/>, so the short-lived original name of a VRCX rename
+    /// is never uploaded. A file already in the state keeps its entry under the new path (<see cref="UploadState.MoveEntry"/>),
+    /// so it isn't treated as a new photo. Returns true when anything was moved.
+    /// </summary>
+    public bool NotifyRenamed(string oldPath, string newPath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(oldPath);
+        ArgumentException.ThrowIfNullOrEmpty(newPath);
+        if (PathEquals(oldPath, newPath))
+            return false;
+
+        var tracked = false;
+        var moved = false;
+        lock (StateLock)
+        {
+            foreach (var t in _inFlight)
+            {
+                if (PathEquals(t.Path, oldPath))
+                {
+                    t.Path = newPath;
+                    tracked = true;
+                }
+            }
+            try
+            {
+                moved = _state.MoveEntry(oldPath, newPath);
+            }
+            catch (ArgumentException)
+            {
+                moved = false;
+            }
+            if (moved)
+                SaveStateLocked();
+        }
+        var queued = _queue.Rename(oldPath, newPath);
+        var settling = Settle.NotifyRenamed(oldPath, newPath);
+
+        if (queued || tracked || settling || moved)
+        {
+            var what = string.Join(", ", new[]
+            {
+                queued ? "queued" : null,
+                tracked || settling ? "in progress" : null,
+                moved ? "state entry moved" : null,
+            }.Where(s => s is not null));
+            WriteLog($"Renamed {oldPath} → {Path.GetFileName(newPath)} ({what}).");
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Processes files until the queue is completed and empty, or <paramref name="cancellationToken"/> is cancelled
     /// (then returns without throwing).
     /// </summary>
@@ -219,7 +296,7 @@ public sealed class UploadWorker
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = cts.Token;
-        var pipeline = Channel.CreateBounded<Task<string?>>(new BoundedChannelOptions(Math.Max(1, MaxInFlight - 1))
+        var pipeline = Channel.CreateBounded<(Tracked File, Task<bool> Prepare)>(new BoundedChannelOptions(Math.Max(1, MaxInFlight - 1))
         {
             SingleReader = true,
             SingleWriter = true,
@@ -231,8 +308,9 @@ public sealed class UploadWorker
             {
                 await foreach (var path in _queue.ReadAllAsync(token).ConfigureAwait(false))
                 {
-                    var prepare = Task.Run(() => PrepareSafeAsync(path, token), token);
-                    await pipeline.Writer.WriteAsync(prepare, token).ConfigureAwait(false);
+                    var file = Track(path);
+                    var prepare = Task.Run(() => PrepareSafeAsync(file, token), token);
+                    await pipeline.Writer.WriteAsync((file, prepare), token).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -246,11 +324,17 @@ public sealed class UploadWorker
 
         try
         {
-            await foreach (var prepare in pipeline.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            await foreach (var (file, prepare) in pipeline.Reader.ReadAllAsync(token).ConfigureAwait(false))
             {
-                var path = await prepare.ConfigureAwait(false);
-                if (path is not null)
-                    await UploadSafeAsync(path, token).ConfigureAwait(false);
+                try
+                {
+                    if (await prepare.ConfigureAwait(false))
+                        await UploadSafeAsync(file, token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Untrack(file);
+                }
                 UpdateStatus();
             }
         }
@@ -261,48 +345,70 @@ public sealed class UploadWorker
         {
             await cts.CancelAsync().ConfigureAwait(false);
             await producer.ConfigureAwait(false);
+            lock (StateLock) _inFlight.Clear();
             SetActivity(WorkerState.Idle);
         }
     }
 
-    // ---- Stage 1 (concurrent): filter, readiness, layer/print skip, settle. Returns the path to upload, or null. ----
+    private Tracked Track(string path)
+    {
+        var file = new Tracked(path);
+        lock (StateLock) _inFlight.Add(file);
+        return file;
+    }
 
-    private async Task<string?> PrepareSafeAsync(string path, CancellationToken token)
+    private void Untrack(Tracked file)
+    {
+        lock (StateLock) _inFlight.Remove(file);
+    }
+
+    /// <summary>The file's current path (after any renames).</summary>
+    private string Current(Tracked file)
+    {
+        lock (StateLock) return file.Path;
+    }
+
+    // ---- Stage 1 (concurrent): filter, readiness, layer/print skip, settle. Returns true when the file should be uploaded. ----
+
+    private async Task<bool> PrepareSafeAsync(Tracked file, CancellationToken token)
     {
         try
         {
-            return await PrepareAsync(path, token).ConfigureAwait(false);
+            return await PrepareAsync(file, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            return null;
+            return false;
         }
         catch (Exception ex)
         {
+            var path = Current(file);
             Fail(path, $"Could not process {path}: {ex.Message}");
-            return null;
+            return false;
         }
     }
 
-    private async Task<string?> PrepareAsync(string path, CancellationToken token)
+    private async Task<bool> PrepareAsync(Tracked file, CancellationToken token)
     {
         var settings = _settings();
+        var path = Current(file);
 
         // 1. Filter.
         if (!Accepted(path, settings))
-            return null;
+            return false;
         WriteLog($"Queued {path}");
 
-        // 2. Readiness.
-        if (!await WaitReadyAsync(path, token).ConfigureAwait(false))
-            return null;
+        // 2. Readiness (following a rename).
+        if (await WaitReadyAsync(file, token).ConfigureAwait(false) is not { } ready)
+            return false;
+        path = ready;
 
         // 3. Layer skip.
         settings = _settings();
         if (VrcFileName.IsLayer(path) && !settings.UploadLayers)
         {
             RecordSkip(path, SkipReason.Layer);
-            return null;
+            return false;
         }
 
         // 4. Print skip.
@@ -321,12 +427,12 @@ public sealed class UploadWorker
             if (print)
             {
                 RecordSkip(path, SkipReason.Print);
-                return null;
+                return false;
             }
         }
 
         // 5. Settle.
-        return await SettleAsync(path, token).ConfigureAwait(false);
+        return await SettleAsync(file, token).ConfigureAwait(false) is not null;
     }
 
     private bool Accepted(string path, AppConfig settings)
@@ -341,45 +447,88 @@ public sealed class UploadWorker
         return true;
     }
 
-    /// <summary>True when ready; false when missing or re-queued.</summary>
-    private async Task<bool> WaitReadyAsync(string path, CancellationToken token)
+    /// <summary>
+    /// Waits until the file is fully written, following renames. Returns its current path, or null when it is gone,
+    /// renamed to a name that isn't uploaded, or re-queued.
+    /// </summary>
+    private async Task<string?> WaitReadyAsync(Tracked file, CancellationToken token)
     {
-        switch (await _readiness.WaitUntilReadyAsync(path, token).ConfigureAwait(false))
+        var path = Current(file);
+        while (true)
         {
-            case ReadinessResult.Ready:
-                return true;
-            case ReadinessResult.Missing:
-                WriteLog($"{path} disappeared before it could be uploaded.");
-                return false;
-            default:
-                Requeue(path, "still being written");
-                return false;
+            var result = await _readiness.WaitUntilReadyAsync(path, token).ConfigureAwait(false);
+            var current = Current(file);
+            if (!PathEquals(current, path))
+            {
+                // Renamed while waiting: check the new name, then wait for it.
+                if (!Accepted(current, _settings()))
+                    return null;
+                path = current;
+                continue;
+            }
+            switch (result)
+            {
+                case ReadinessResult.Ready:
+                    return path;
+                case ReadinessResult.Missing:
+                    WriteLog($"{path} disappeared before it could be uploaded.");
+                    return null;
+                default:
+                    Requeue(path, "still being written");
+                    return null;
+            }
         }
     }
 
-    /// <summary>Waits for VRCX; returns the (possibly renamed) path, or null when the file is gone or no longer accepted.</summary>
-    private async Task<string?> SettleAsync(string path, CancellationToken token)
+    /// <summary>
+    /// Waits for VRCX, following renames; returns the (possibly renamed) path, or null when the file is gone or no longer
+    /// accepted.
+    /// </summary>
+    private async Task<string?> SettleAsync(Tracked file, CancellationToken token)
     {
-        var timeout = TimeSpan.FromSeconds(Math.Max(0, _settings().VrcxWaitSeconds));
-        var waiting = Settle.WaitAsync(path, timeout, token);
-        UpdateStatus();
-        SettleResult result;
-        try
+        var path = Current(file);
+        var original = path;
+        while (true)
         {
-            result = await waiting.ConfigureAwait(false);
-        }
-        finally
-        {
+            var timeout = TimeSpan.FromSeconds(Math.Max(0, _settings().VrcxWaitSeconds));
+            var waiting = Settle.WaitAsync(path, timeout, token);
             UpdateStatus();
-        }
+            SettleResult result;
+            try
+            {
+                result = await waiting.ConfigureAwait(false);
+            }
+            finally
+            {
+                UpdateStatus();
+            }
 
-        WriteLog($"Settled {result.Path}: {result.Reason} after {result.Waited.TotalSeconds:0.0} s" +
-                 (result.Renamed ? $" (renamed from {Path.GetFileName(path)})" : "") + ".");
-        if (result.Reason == SettleReason.Missing)
-            return null;
-        if (result.Renamed && !Accepted(result.Path, _settings()))
-            return null;
-        return result.Path;
+            // A rename reported just before the wait started isn't seen by it: the file looks missing. Wait on the new name.
+            var current = Current(file);
+            if (result.Reason == SettleReason.Missing && !PathEquals(current, path))
+            {
+                if (!Accepted(current, _settings()))
+                    return null;
+                path = current;
+                continue;
+            }
+
+            var renamed = !PathEquals(result.Path, original);
+            WriteLog($"Settled {result.Path}: {result.Reason} after {result.Waited.TotalSeconds:0.0} s" +
+                     (renamed ? $" (renamed from {Path.GetFileName(original)})" : "") + ".");
+            if (result.Reason == SettleReason.Missing)
+                return null;
+            // NotifyRenamed moves both the settle wait and the tracked path; the tracked one is the latest.
+            lock (StateLock)
+            {
+                if (result.Renamed && PathEquals(file.Path, path))
+                    file.Path = result.Path;
+                current = file.Path;
+            }
+            if (!PathEquals(current, original) && !Accepted(current, _settings()))
+                return null;
+            return current;
+        }
     }
 
     private void RecordSkip(string path, SkipReason reason)
@@ -415,11 +564,11 @@ public sealed class UploadWorker
 
     // ---- Stage 2 (one at a time, in order): unchanged check, snapshot, hash, upload, album, state. ----
 
-    private async Task UploadSafeAsync(string path, CancellationToken token)
+    private async Task UploadSafeAsync(Tracked file, CancellationToken token)
     {
         try
         {
-            await UploadAsync(path, token).ConfigureAwait(false);
+            await UploadAsync(file, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -427,6 +576,7 @@ public sealed class UploadWorker
         }
         catch (Exception ex)
         {
+            var path = Current(file);
             Fail(path, $"Could not upload {path}: {ex.Message}");
         }
         finally
@@ -435,27 +585,32 @@ public sealed class UploadWorker
         }
     }
 
-    private async Task UploadAsync(string path, CancellationToken token)
+    private async Task UploadAsync(Tracked file, CancellationToken token)
     {
         var snapshotAttempts = 0;
         var transientFailures = 0;
         while (true)
         {
             token.ThrowIfCancellationRequested();
+            var path = Current(file);
 
             // 6. Skip if unchanged in state.
             var current = _probe.TryStat(path);
             if (current is not { } stat)
             {
+                if (!PathEquals(Current(file), path))
+                    continue; // renamed just now
                 WriteLog($"{path} disappeared before it could be uploaded.");
                 return;
             }
             string relative;
             bool unchanged;
+            StateEntry? previous;
             lock (StateLock)
             {
                 relative = _state.ToKey(path);
                 unchanged = _state.IsUnchanged(path, stat.Length, stat.LastWriteUtc);
+                previous = _state.Get(path);
             }
             if (unchanged)
             {
@@ -470,21 +625,21 @@ public sealed class UploadWorker
             {
                 if (!_probe.Exists(path))
                 {
+                    if (!PathEquals(Current(file), path))
+                        continue; // renamed while it was being read
                     WriteLog($"{path} disappeared before it could be uploaded.");
                     return;
                 }
                 if (++snapshotAttempts >= MaxSnapshotAttempts)
                 {
-                    Requeue(path, "it keeps changing");
+                    Requeue(Current(file), "it keeps changing");
                     return;
                 }
                 WriteLog($"{relative} changed while it was being read; waiting for it to settle again.");
-                if (!await WaitReadyAsync(path, token).ConfigureAwait(false))
+                if (await WaitReadyAsync(file, token).ConfigureAwait(false) is null)
                     return;
-                var settled = await SettleAsync(path, token).ConfigureAwait(false);
-                if (settled is null)
+                if (await SettleAsync(file, token).ConfigureAwait(false) is null)
                     return;
-                path = settled;
                 continue;
             }
             var (bytes, after) = snapshot.Value;
@@ -521,7 +676,15 @@ public sealed class UploadWorker
                 case UploadStatus.Duplicate:
                     // 10. Album. 11. State. 12. Events.
                     await AddToAlbumAsync(client, settings, result.AssetId!, relative, token).ConfigureAwait(false);
-                    RecordUpload(path, relative, after, sha1, result);
+                    // A new version of a file uploaded before (VRCX added its metadata late): replace the old asset.
+                    var previousId = previous is { Skipped: null, AssetId: { Length: > 0 } id } ? id : null;
+                    var replaced = false;
+                    if (previousId is not null && result.Status == UploadStatus.Created
+                        && !string.Equals(previousId, result.AssetId, StringComparison.Ordinal))
+                    {
+                        replaced = await ReplaceAsync(client, previousId, result.AssetId!, relative, token).ConfigureAwait(false);
+                    }
+                    RecordUpload(file, after, sha1, result, previousId, replaced);
                     return;
 
                 case UploadStatus.Transient:
@@ -587,19 +750,80 @@ public sealed class UploadWorker
         }
     }
 
-    private void RecordUpload(string path, string relative, FileStat stat, string sha1, UploadResult result)
+    /// <summary>
+    /// Copies albums, favourite etc. from <paramref name="oldId"/> to <paramref name="newId"/> and trashes the old asset,
+    /// when the key has <c>asset.copy</c> and <c>asset.delete</c>; otherwise keeps both. True when replaced.
+    /// </summary>
+    private async Task<bool> ReplaceAsync(IUploadClient client, string oldId, string newId, string relative, CancellationToken token)
+    {
+        try
+        {
+            var key = await client.GetMyApiKeyAsync(cancellationToken: token).ConfigureAwait(false);
+            if (key.Status != ApiKeyCheckStatus.Ok || key.Key is null)
+            {
+                WriteLog($"Could not check the API key's permissions ({key.Status}, {key.HttpStatus}); kept both versions of {relative} (old asset {oldId}, new asset {newId}).");
+                return false;
+            }
+            if (!key.Key.CanReplace)
+            {
+                WriteLog($"Kept both versions of {relative} (old asset {oldId}, new asset {newId}): the API key lacks " +
+                         $"'{ApiKeyInfo.PermissionAssetCopy}' and '{ApiKeyInfo.PermissionAssetDelete}', which are needed to replace the old one.");
+                return false;
+            }
+
+            var copy = await client.CopyAssetAsync(oldId, newId, token).ConfigureAwait(false);
+            if (!copy.Succeeded)
+            {
+                WriteLog($"Could not copy albums and favourite from asset {oldId} to {newId} ({copy.Status}, {copy.HttpStatus}: {copy.Message}); kept both versions of {relative}.");
+                return false;
+            }
+            var trash = await client.TrashAssetsAsync([oldId], token).ConfigureAwait(false);
+            if (!trash.Succeeded)
+            {
+                WriteLog($"Could not move the old asset {oldId} of {relative} to the trash ({trash.Status}, {trash.HttpStatus}: {trash.Message}); kept both versions.");
+                return false;
+            }
+            WriteLog($"Replaced asset {oldId} of {relative} with {newId} (the old one is in the trash).");
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
+        {
+            WriteLog($"Could not replace asset {oldId} of {relative} ({ex.Message}); kept both versions.");
+            return false;
+        }
+    }
+
+    private void RecordUpload(Tracked file, FileStat stat, string sha1, UploadResult result, string? previousId, bool replaced)
     {
         var created = result.Status == UploadStatus.Created;
+        var update = previousId is not null;
+        string path;
+        string relative;
         lock (StateLock)
         {
+            // Under the lock, so a rename during the upload either already moved the entry or will move this one.
+            path = file.Path;
+            relative = _state.ToKey(path);
             _state.Set(path, new StateEntry { Size = stat.Length, MtimeUtc = stat.LastWriteUtc, Sha1 = sha1, AssetId = result.AssetId });
-            if (created)
-                _state.Session.Uploaded++;
-            else
-                _state.Session.Duplicates++;
-            _state.Session.LastFile = relative;
+            if (!update)
+            {
+                if (created)
+                    _state.Session.Uploaded++;
+                else
+                    _state.Session.Duplicates++;
+                _state.Session.LastFile = relative;
+            }
             _state.Heartbeat(_clock.UtcNow);
             SaveStateLocked();
+        }
+
+        if (update)
+        {
+            var text = $"Updated {Path.GetFileName(path)} (VRCX metadata)";
+            WriteLog($"{text}: {relative} → asset {result.AssetId} ({(created ? "new asset" : "duplicate")}, was {previousId}).");
+            Raise(Updated, new UploadEvent(UploadOutcome.Updated, path, relative, result.AssetId, Detail: text,
+                PreviousAssetId: previousId, Replaced: replaced));
+            return;
         }
         WriteLog($"{(created ? "Uploaded" : "Duplicate")} {relative} → asset {result.AssetId}.");
         var evt = new UploadEvent(created ? UploadOutcome.Uploaded : UploadOutcome.Duplicate, path, relative, result.AssetId);
@@ -671,6 +895,8 @@ public sealed class UploadWorker
             WriteLog($"Could not save the state file ({ex.Message}).");
         }
     }
+
+    private static bool PathEquals(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     private static string Describe(UploadResult result) =>
         result.HttpStatus is { } code ? $"HTTP {code}: {result.Message}" : result.Message ?? result.Status.ToString();

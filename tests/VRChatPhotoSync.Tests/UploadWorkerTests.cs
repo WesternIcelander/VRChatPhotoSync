@@ -62,9 +62,57 @@ public sealed class FakeUploadClient : IUploadClient
         lock (_lock) AlbumAdds.Add((albumId, assetIds.ToArray()));
         return Task.FromResult(ApiResult<AlbumAddResult>.Ok(new AlbumAddResult(assetIds.ToArray(), [], [])));
     }
+
+    /// <summary>The permissions <c>api-keys/me</c> reports.</summary>
+    public string[] Permissions { get; set; } = [ApiKeyInfo.PermissionAssetUpload];
+
+    /// <summary>What <c>api-keys/me</c> answers; Ok with <see cref="Permissions"/> by default.</summary>
+    public ApiKeyCheckStatus KeyStatus { get; set; } = ApiKeyCheckStatus.Ok;
+
+    public ApiResult CopyResult { get; set; } = ApiResult.Ok(204);
+    public ApiResult TrashResult { get; set; } = ApiResult.Ok(204);
+
+    public int KeyChecks;
+    public List<(string Source, string Target)> Copies { get; } = [];
+    public List<string[]> Trashes { get; } = [];
+
+    /// <summary>Every replace-related call, in order ("key", "copy", "trash").</summary>
+    public List<string> ReplaceCalls { get; } = [];
+
+    public Task<ApiKeyCheckResult> GetMyApiKeyAsync(string? albumName = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            KeyChecks++;
+            ReplaceCalls.Add("key");
+        }
+        return Task.FromResult(KeyStatus == ApiKeyCheckStatus.Ok
+            ? new ApiKeyCheckResult(ApiKeyCheckStatus.Ok, 200, new ApiKeyInfo("key-1", "PhotoSync", Permissions), [])
+            : new ApiKeyCheckResult(KeyStatus, null, null, []));
+    }
+
+    public Task<ApiResult> CopyAssetAsync(string sourceId, string targetId, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            Copies.Add((sourceId, targetId));
+            ReplaceCalls.Add("copy");
+        }
+        return Task.FromResult(CopyResult);
+    }
+
+    public Task<ApiResult> TrashAssetsAsync(IReadOnlyCollection<string> assetIds, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            Trashes.Add(assetIds.ToArray());
+            ReplaceCalls.Add("trash");
+        }
+        return Task.FromResult(TrashResult);
+    }
 }
 
-public sealed class UploadWorkerTests
+public sealed partial class UploadWorkerTests
 {
     private const string Root = @"D:\Photos\VRChat";
     private const string Month = Root + @"\2026-11";
@@ -141,6 +189,7 @@ public sealed class UploadWorkerTests
         worker.Duplicate += e => { lock (_events) _events.Add(e); };
         worker.Skipped += e => { lock (_events) _events.Add(e); };
         worker.Failed += e => { lock (_events) _events.Add(e); };
+        worker.Updated += e => { lock (_events) _events.Add(e); };
         worker.StatusChanged += s => { lock (_statuses) _statuses.Add(s); };
         worker.Log += l => { lock (_log) _log.Add(l); };
         return worker;

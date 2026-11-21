@@ -288,7 +288,7 @@ How this list works:
   - Retry `Transient` with backoff (5 s, 15 s, 1 min, 5 min, then every 5 min) without losing order. `AuthError` pauses the queue until `Resume()`. `Rejected` → log and mark it failed.
   - Reads the settings live, so checkbox changes apply to the next file.
   - Tests: layer/print on/off, detection-exception upload, unchanged skip, retry/backoff, auth pause/resume, snapshot change → re-settle, album add.
-- [ ] **Renames and late VRCX edits**, with tests:
+- [x] **Renames and late VRCX edits**, with tests:
   - `FileRenamed`: if the old path is pending or settling, switch to the new path. If it is in state, call `MoveEntry`. Never upload the short-lived original name.
   - A file in state that changed (size/mtime differ) → re-upload. If the result is `created` with a new id: when `api-keys/me` grants `asset.copy` and `asset.delete` (or `all`), copy old → new, then trash old; otherwise log "kept both versions". Update state.
   - It doesn't count as a new upload; show `Updated <file> (VRCX metadata)` instead.
