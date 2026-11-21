@@ -8,4 +8,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <AssemblyName>VRChatPhotoSync</AssemblyName>
+    <RootNamespace>VRChatPhotoSync</RootNamespace>
+    <Product>VRChat PhotoSync</Product>
+    <AssemblyTitle>VRChat PhotoSync</AssemblyTitle>
+    <Description>Uploads new VRChat photos to an Immich server.</Description>
+    <Version>0.1.0</Version>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="VRChatPhotoSync.Tests" />
+    <!-- Also embedded so windows and the tray icon can load it at run time. -->
+    <EmbeddedResource Include="app.ico" LogicalName="VRChatPhotoSync.app.ico" />
+  </ItemGroup>
+
 </Project>
