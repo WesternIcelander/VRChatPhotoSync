@@ -236,7 +236,7 @@ How this list works:
     - Reject hidden and temp files.
   - `PhotoFilter.EnumerateCandidates(root)`: walk recursively **including the root**, skipping the excluded folders without listing them.
   - Test cases (all from the plan): layer names, `vrchat_…PNG`, `.jpg`, `.lnk`, excluded folders, root vs month folder, strict on/off, `- Copy.png` (rejected), the trailing-`_` copy (accepted), `_wrld_<uuid>` (accepted), `(1).png`/`_edited.png`/missing milliseconds/layer+world (rejected).
-- [ ] **PNG helpers**, with generated-PNG tests:
+- [x] **PNG helpers**, with generated-PNG tests:
   - `ImageSize.TryRead(path)` (IHDR without decoding).
   - `PngChunks.HasVrcxMetadata(path)`: an `iTXt`/`tEXt` chunk with keyword `Description`. Open with `FileShare.ReadWrite | FileShare.Delete`. A truncated or invalid PNG → "not ready", no exception.
   - A test helper that inserts a `Description` chunk into a PNG (used later to simulate VRCX).
