@@ -31,6 +31,24 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _openLogItem = new("Open log");
     private readonly ToolStripMenuItem _openImmichItem = new("Open Immich");
     private readonly System.Windows.Forms.Timer _tickTimer = new() { Interval = 1000 };
+    private readonly NotifyIcon _trayIcon = new();
+    private readonly ContextMenuStrip _trayMenu = new();
+    private readonly ToolStripMenuItem _trayShowItem = new("Show");
+    private readonly ToolStripMenuItem _trayExitItem = new("Exit");
+
+    internal const int WM_CLOSE = 0x0010;
+    internal const int WM_SYSCOMMAND = 0x0112;
+    internal const int SC_MINIMIZE = 0xF020;
+    internal const int SC_CLOSE = 0xF060;
+
+    /// <summary>The longest tooltip a <see cref="NotifyIcon"/> accepts.</summary>
+    internal const int MaxTrayTextLength = 127;
+
+    /// <summary>True until the first show when the app starts minimized to the tray.</summary>
+    private bool _startInTray;
+    /// <summary>The window's last position in the normal (not minimized) state.</summary>
+    private Point _normalLocation;
+    private bool _hasNormalLocation;
 
     private int _renderPending;
     private bool _rendering;
@@ -71,6 +89,9 @@ public sealed class MainForm : Form
 
         InitializeComponent();
         Icon = AppIcon.Icon;
+        _trayIcon.Icon = AppIcon.Icon;
+        _trayIcon.Visible = true; // always present, so both "to tray" options work
+        ApplyStartupWindowState(Config.Current);
 
         ViewModel.Changed += RequestRender;
         Config.Changed += ViewModel.ApplyConfig;
@@ -210,6 +231,176 @@ public sealed class MainForm : Form
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(saveError);
     }
 
+    // ---- Tray and window behaviour ----
+
+    /// <summary>
+    /// Places the window at its saved position (if that is still on a screen) and, when starting minimized
+    /// (<c>--minimized</c>, <see cref="AppConfig.StartMinimized"/>, or still minimized when the last run was killed),
+    /// minimizes it to the taskbar or the tray per <see cref="AppConfig.MinimizeButtonAction"/>.
+    /// </summary>
+    private void ApplyStartupWindowState(AppConfig config)
+    {
+        if (config.WindowLeft is int left && config.WindowTop is int top && IsOnScreen(new Rectangle(left, top, Width, Height)))
+        {
+            StartPosition = FormStartPosition.Manual;
+            Location = new Point(left, top);
+            _normalLocation = Location;
+            _hasNormalLocation = true;
+        }
+
+        if (config.StartMinimized || config.WindowMinimized)
+        {
+            if (config.MinimizeButtonAction == MinimizeButtonAction.Tray)
+                _startInTray = true;
+            else
+                WindowState = FormWindowState.Minimized;
+        }
+    }
+
+    /// <summary>True when enough of the window's title bar would be on a screen's working area to drag it.</summary>
+    internal static bool IsOnScreen(Rectangle bounds)
+    {
+        var titleBar = new Rectangle(bounds.Left, bounds.Top, Math.Max(bounds.Width, 1), 24);
+        return Screen.AllScreens.Any(s =>
+        {
+            var visible = Rectangle.Intersect(s.WorkingArea, titleBar);
+            return visible.Width >= Math.Min(60, titleBar.Width) && visible.Height >= 12;
+        });
+    }
+
+    /// <summary>The tray icon's tooltip: the title (with the count) and the status line, cut to what Windows allows.</summary>
+    internal static string TrayText(MainView view)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        var text = $"{view.Title}\n{view.StatusText}";
+        return text.Length <= MaxTrayTextLength ? text : text[..(MaxTrayTextLength - 1)] + "…";
+    }
+
+    /// <summary>The tray icon (for tests).</summary>
+    internal NotifyIcon TrayIcon => _trayIcon;
+
+    /// <summary>True while the window is hidden in the tray (not just minimized to the taskbar).</summary>
+    public bool IsInTray => IsHandleCreated && !Visible && !IsDisposed;
+
+    /// <summary>Shows the window again from the tray or the taskbar and brings it to the front.</summary>
+    public void RestoreWindow()
+    {
+        if (IsDisposed)
+            return;
+        _startInTray = false;
+        if (!Visible)
+            Show();
+        if (WindowState == FormWindowState.Minimized)
+            WindowState = FormWindowState.Normal;
+        Activate();
+        SaveWindowConfig(c => c with { WindowMinimized = false });
+    }
+
+    /// <summary>Hides the window to the tray (the app keeps running).</summary>
+    public void HideToTray()
+    {
+        if (IsDisposed)
+            return;
+        RememberLocation();
+        Hide();
+        SaveWindowConfig(c => WithLocation(c) with { WindowMinimized = true });
+    }
+
+    /// <summary>
+    /// Only the title-bar X / Alt+F4 (<c>WM_SYSCOMMAND</c> + <c>SC_CLOSE</c>) follows
+    /// <see cref="AppConfig.CloseButtonAction"/>, and the minimize button (<c>SC_MINIMIZE</c>) follows
+    /// <see cref="AppConfig.MinimizeButtonAction"/>. A plain <c>WM_CLOSE</c> (taskkill, the tray's Exit) and the end of
+    /// the Windows session always exit, since nothing cancels <see cref="Form.FormClosing"/>.
+    /// </summary>
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_SYSCOMMAND)
+        {
+            var command = (int)(m.WParam.ToInt64() & 0xFFF0);
+            var config = Config.Current;
+            if ((command == SC_CLOSE && config.CloseButtonAction == CloseButtonAction.HideToTray)
+                || (command == SC_MINIMIZE && config.MinimizeButtonAction == MinimizeButtonAction.Tray))
+            {
+                HideToTray();
+                m.Result = IntPtr.Zero;
+                return;
+            }
+        }
+        base.WndProc(ref m);
+    }
+
+    /// <summary>Starting minimized to the tray: create the window (so updates and messages work) but don't show it.</summary>
+    protected override void SetVisibleCore(bool value)
+    {
+        if (value && _startInTray)
+        {
+            _startInTray = false;
+            if (!IsHandleCreated)
+                CreateHandle();
+            value = false;
+        }
+        base.SetVisibleCore(value);
+    }
+
+    protected override void OnMove(EventArgs e)
+    {
+        base.OnMove(e);
+        RememberLocation();
+    }
+
+    protected override void OnResizeEnd(EventArgs e)
+    {
+        base.OnResizeEnd(e); // also raised at the end of a drag
+        RememberLocation();
+        SaveWindowConfig(WithLocation);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (!IsHandleCreated || !Visible)
+            return;
+        var minimized = WindowState == FormWindowState.Minimized;
+        SaveWindowConfig(c => (minimized ? c : WithLocation(c)) with { WindowMinimized = minimized });
+    }
+
+    /// <summary>A normal exit: save the position and clear the minimized flag, so the next normal start follows the settings.</summary>
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        if (e.Cancel)
+            return;
+        RememberLocation();
+        SaveWindowConfig(c => WithLocation(c) with { WindowMinimized = false });
+    }
+
+    private void RememberLocation()
+    {
+        if (!IsHandleCreated || !Visible || WindowState != FormWindowState.Normal)
+            return;
+        _normalLocation = Location;
+        _hasNormalLocation = true;
+    }
+
+    private AppConfig WithLocation(AppConfig config) =>
+        _hasNormalLocation ? config with { WindowLeft = _normalLocation.X, WindowTop = _normalLocation.Y } : config;
+
+    /// <summary>Saves a window-state change, only when it changes anything. A failed save is logged, not shown.</summary>
+    private void SaveWindowConfig(Func<AppConfig, AppConfig> change)
+    {
+        var current = Config.Current;
+        if (change(current) == current)
+            return;
+        try
+        {
+            Config.Update(change);
+        }
+        catch (Exception ex)
+        {
+            Logger?.Warn($"Could not save the window state: {ex.Message}");
+        }
+    }
+
     // ---- Rendering ----
 
     /// <summary>Queues one render on the UI thread; several changes in a row are shown together.</summary>
@@ -255,6 +446,7 @@ public sealed class MainForm : Form
             _uploadLayersCheck.Text = view.UploadLayersText;
             _uploadLayersCheck.Checked = view.UploadLayers;
             _tickTimer.Enabled = ViewModel.NeedsTick;
+            _trayIcon.Text = TrayText(view);
         }
         finally
         {
@@ -426,6 +618,9 @@ public sealed class MainForm : Form
             _tickTimer.Dispose();
             _toolTip.Dispose();
             _moreMenu.Dispose();
+            _trayIcon.Visible = false; // remove it from the tray straight away
+            _trayIcon.Dispose();
+            _trayMenu.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -507,6 +702,14 @@ public sealed class MainForm : Form
         _openImmichItem.Click += OnOpenImmich;
         _moreMenu.Items.AddRange([_uploadExistingItem, _behaviourItem, new ToolStripSeparator(), _openLogItem, _openImmichItem]);
         _moreMenu.Opening += OnMoreMenuOpening;
+
+        _trayShowItem.Font = new Font(_trayMenu.Font, FontStyle.Bold); // the double-click action
+        _trayShowItem.Click += (_, _) => RestoreWindow();
+        _trayExitItem.Click += (_, _) => Close();
+        _trayMenu.Items.AddRange([_trayShowItem, new ToolStripSeparator(), _trayExitItem]);
+        _trayIcon.ContextMenuStrip = _trayMenu;
+        _trayIcon.Text = MainViewModel.AppTitle;
+        _trayIcon.DoubleClick += (_, _) => RestoreWindow();
 
         Controls.AddRange([_statusLabel, _countersLabel, _lastLabel, _queueLabel, _skipPrintsCheck, _uploadLayersCheck,
             _serverButton, _folderButton, _moreButton]);

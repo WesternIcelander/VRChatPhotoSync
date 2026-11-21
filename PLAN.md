@@ -333,7 +333,7 @@ How this list works:
   - Read-only photo folder with its source, plus an "Open VRChat config folder" link.
   - Save: validate, auto-test, "Save anyway?" if the test fails, write config, restart the client, resume after an auth pause, start the backfill if it was ticked.
   - Put the validation/test-result logic in a testable class, with unit tests against a fake client.
-- [ ] **Tray and window behaviour**:
+- [x] **Tray and window behaviour**:
   - `NotifyIcon` always present (tooltip shows the count; double-click restores; menu has Show/Exit).
   - `WndProc` override: only `WM_SYSCOMMAND`/`SC_CLOSE` follows `CloseButtonAction`. A plain `WM_CLOSE` and session end always exit. `SC_MINIMIZE` follows `MinimizeButtonAction`.
   - `--minimized`/`StartMinimized` start minimized according to the minimize setting.

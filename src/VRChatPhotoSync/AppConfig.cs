@@ -48,6 +48,18 @@ public sealed record AppConfig
     /// <summary>Start with the window minimized (to the taskbar or tray, per <see cref="MinimizeButtonAction"/>).</summary>
     public bool StartMinimized { get; set; }
 
+    /// <summary>The main window's last left edge (screen coordinates, normal state). Null = centre on screen.</summary>
+    public int? WindowLeft { get; set; }
+
+    /// <summary>The main window's last top edge (screen coordinates, normal state). Null = centre on screen.</summary>
+    public int? WindowTop { get; set; }
+
+    /// <summary>
+    /// True while the main window is minimized or in the tray. Cleared on a normal exit, so a relaunch after a kill
+    /// (VRCX closing it with VRChat) starts minimized the same way, while a normal start follows <see cref="StartMinimized"/>.
+    /// </summary>
+    public bool WindowMinimized { get; set; }
+
     /// <summary>True when the album feature is in use.</summary>
     [JsonIgnore]
     public bool HasAlbum => !string.IsNullOrWhiteSpace(AlbumName);
