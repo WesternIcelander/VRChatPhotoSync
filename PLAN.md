@@ -188,7 +188,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 
 ### 1. Project setup
 - [x] Create a solution `VRChatPhotoSync.sln` with `src/VRChatPhotoSync` (WinForms, `net10.0-windows`, `<Nullable>enable</Nullable>`, `<UseWindowsForms>true</UseWindowsForms>`) and `tests/VRChatPhotoSync.Tests` (xUnit).
-- [ ] Extend `.gitignore` (it already ignores `CLAUDE.local.md`, `sample-photos/`, `config.json`, `state.json`, logs) with `bin/`, `obj/`, `publish/`, `*.user`, `.vs/`. Add `.editorconfig`.
+- [x] Extend `.gitignore` (it already ignores `CLAUDE.local.md`, `sample-photos/`, `config.json`, `state.json`, logs) with `bin/`, `obj/`, `publish/`, `*.user`, `.vs/`. Add `.editorconfig`.
 - [ ] Add an app icon and set `AssemblyName`, `Product` and `Version`.
 - [ ] Make the first git commit of the skeleton.
 

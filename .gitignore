@@ -12,3 +12,10 @@ config.json
 state.json
 logs/
 *.log
+
+# .NET build output and IDE files
+bin/
+obj/
+publish/
+*.user
+.vs/
