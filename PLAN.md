@@ -240,7 +240,7 @@ How this list works:
   - `ImageSize.TryRead(path)` (IHDR without decoding).
   - `PngChunks.HasVrcxMetadata(path)`: an `iTXt`/`tEXt` chunk with keyword `Description`. Open with `FileShare.ReadWrite | FileShare.Delete`. A truncated or invalid PNG → "not ready", no exception.
   - A test helper that inserts a `Description` chunk into a PNG (used later to simulate VRCX).
-- [ ] **Print detection**, with generated-fixture tests:
+- [x] **Print detection**, with generated-fixture tests:
   - Move `print_mask.png` to `docs/`.
   - `PrintLayout` constants: photo (64,69)–(1983,1148), caption (0,1159)–(2047,1435), inclusive.
   - `PrintDetector.IsPrint(path)`: only 2048×1440 (checked via the name or IHDR first). Otherwise `Bitmap` + `LockBits`, and border pixels with min channel ≥ 240 must make up ≥ 99.9%, with early exit.
