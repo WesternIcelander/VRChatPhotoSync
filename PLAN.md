@@ -190,7 +190,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 - [x] Create a solution `VRChatPhotoSync.sln` with `src/VRChatPhotoSync` (WinForms, `net10.0-windows`, `<Nullable>enable</Nullable>`, `<UseWindowsForms>true</UseWindowsForms>`) and `tests/VRChatPhotoSync.Tests` (xUnit).
 - [x] Extend `.gitignore` (it already ignores `CLAUDE.local.md`, `sample-photos/`, `config.json`, `state.json`, logs) with `bin/`, `obj/`, `publish/`, `*.user`, `.vs/`. Add `.editorconfig`.
 - [x] Add an app icon and set `AssemblyName`, `Product` and `Version`.
-- [ ] Make the first git commit of the skeleton.
+- [x] Make the first git commit of the skeleton.
 
 ### 2. Configuration
 - [ ] `AppConfig` record (no photo-folder field; that comes from VRChat): `ServerUrl`, `ApiKeyProtected`, `AlbumName?` (empty = no album), `Visibility` (default `timeline`), `ExcludePrints` (default true), `UploadLayers` (default false), `StrictFileNames` (default true), `VrcxWaitSeconds` (default 10, 0 = off), `CloseButtonAction` (`Exit` | `HideToTray`, default `Exit`), `MinimizeButtonAction` (`Taskbar` | `Tray`, default `Taskbar`), `StartMinimized` (default false). There is no file-type setting, because the upload rule is fixed (`VRChat_*.png`).
