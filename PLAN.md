@@ -387,7 +387,7 @@ How this list works:
   - Record the size.
   - **Results (2026-11-21):** `tools/publish.ps1` → `publish\VRChatPhotoSync.exe` **49.5 MB** (51,951,463 bytes), plus `VRChatPhotoSync.pdb` (not needed to run). Copied alone into an empty scratch folder and started with `--folder <empty scratch>`: the log shows `Server: (not set); API key not set.`, `No Immich client: the server URL or API key isn't set up.`, the watcher and an empty catch-up; the Immich server window opened and the process stayed up. `config.json`, `state.json` and `logs\` were created next to the exe. Plain `taskkill /PID` → `PhotoSync stopping (exit)`, exit code 0.
     - The first run showed two `ObjectDisposedException`s on that `taskkill` (the server window's `CancellationTokenSource` was cancelled after the window had already been disposed, then disposed again by the caller's `using`). Fixed in `ServerSettingsForm` (cancel/dispose only once) with a test; the rerun logged no errors.
-- [ ] **README.md**:
+- [x] **README.md**:
   - what it does
   - Immich API key creation (`<server>/user-settings?isOpen=api-keys`, or profile → Account Settings → API Keys) and the required/optional permissions
   - first-run setup
