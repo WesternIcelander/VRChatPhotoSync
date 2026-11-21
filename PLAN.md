@@ -207,7 +207,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 - [x] Ship `config.example.json` with placeholder values (no real paths, URLs or keys).
 
 ### 3. Immich API client
-- [ ] `ImmichClient`: one `HttpClient` with a base address, the `x-api-key` header, `Accept: application/json`, a generous timeout for uploads (for example 5 min), and User-Agent `VRChatPhotoSync/<version>`.
+- [x] `ImmichClient`: one `HttpClient` with a base address, the `x-api-key` header, `Accept: application/json`, a generous timeout for uploads (for example 5 min), and User-Agent `VRChatPhotoSync/<version>`.
 - [ ] `PingAsync()` → `GET server/ping`.
 - [ ] `GetMyApiKeyAsync()` → `GET api-keys/me`, which returns the permissions. Warn if neither `all` nor `asset.upload` is present, and warn about the album permissions when an album is set.
 - [ ] `UploadAsync(path, sha1, createdAt, modifiedAt)`:
