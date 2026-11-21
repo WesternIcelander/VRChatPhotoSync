@@ -218,7 +218,7 @@ How this list works:
   - `CopyAssetAsync(source, target)` (`PUT assets/copy`).
   - `TrashAssetsAsync(ids)` (`DELETE assets`, never `force`).
   - `GetServerVersionAsync()` (`GET server/version`, for the settings window).
-- [ ] **Integration tests** (`[Trait("Category","Integration")]`) against a real server:
+- [x] **Integration tests** (`[Trait("Category","Integration")]`) against a real server:
   - Read `serverUrl`/`apiKey` from git-ignored `secrets.local.json` at the repo root, or from `IMMICH_TEST_URL`/`IMMICH_TEST_API_KEY`. **Skip** when neither is set. Never print the key.
   - Cover: ping, `api-keys/me`, server version, and upload of a **generated** PNG (unique pixels per run).
   - Upload the same bytes again and expect `duplicate`. Run the bulk check on those bytes and expect reject/duplicate.
