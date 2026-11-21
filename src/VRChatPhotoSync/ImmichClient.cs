@@ -11,7 +11,7 @@ namespace VRChatPhotoSync;
 /// Request paths are relative to the base address (for example <c>server/ping</c>), which
 /// always ends in <c>/api/</c>.
 /// </summary>
-public sealed class ImmichClient : IDisposable
+public sealed partial class ImmichClient : IDisposable
 {
     /// <summary>Timeout for every request. Long enough for a ~50 MB PNG over a slow upload link.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
@@ -300,7 +300,11 @@ public sealed class ImmichClient : IDisposable
         form.Add(content);
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _http.Dispose();
+        _albumLock.Dispose();
+    }
 
     /// <summary>Wraps a caller's stream so disposing the request doesn't close it.</summary>
     private sealed class LeaveOpenStream(Stream inner) : Stream

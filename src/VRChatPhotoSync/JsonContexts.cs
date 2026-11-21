@@ -14,6 +14,16 @@ namespace VRChatPhotoSync;
 [JsonSerializable(typeof(PingResponseDto))]
 [JsonSerializable(typeof(ApiKeyResponseDto))]
 [JsonSerializable(typeof(AssetMediaResponseDto))]
+[JsonSerializable(typeof(BulkUploadCheckRequestDto))]
+[JsonSerializable(typeof(BulkUploadCheckResponseDto))]
+[JsonSerializable(typeof(List<AlbumResponseDto>))]
+[JsonSerializable(typeof(AlbumResponseDto))]
+[JsonSerializable(typeof(CreateAlbumDto))]
+[JsonSerializable(typeof(BulkIdsDto))]
+[JsonSerializable(typeof(List<BulkIdResponseDto>))]
+[JsonSerializable(typeof(AssetCopyDto))]
+[JsonSerializable(typeof(AssetBulkDeleteDto))]
+[JsonSerializable(typeof(ServerVersionResponseDto))]
 internal sealed partial class ImmichJsonContext : JsonSerializerContext
 {
 }
@@ -51,4 +61,84 @@ internal sealed class AssetMediaResponseDto
 {
     public string? Id { get; set; }
     public string? Status { get; set; }
+}
+
+/// <summary><c>POST assets/bulk-upload-check</c> request (<c>AssetBulkUploadCheckDto</c>).</summary>
+internal sealed class BulkUploadCheckRequestDto
+{
+    public List<BulkUploadCheckItemDto> Assets { get; set; } = [];
+}
+
+/// <summary>One item of a bulk upload check: a client-chosen id and the file's SHA-1.</summary>
+internal sealed class BulkUploadCheckItemDto
+{
+    public string Id { get; set; } = "";
+    public string Checksum { get; set; } = "";
+}
+
+/// <summary><c>POST assets/bulk-upload-check</c> body (<c>AssetBulkUploadCheckResponseDto</c>).</summary>
+internal sealed class BulkUploadCheckResponseDto
+{
+    public List<BulkUploadCheckResultDto?>? Results { get; set; }
+}
+
+/// <summary>One result of a bulk upload check: <c>{id, action, reason?, assetId?, isTrashed?}</c>.</summary>
+internal sealed class BulkUploadCheckResultDto
+{
+    public string? Id { get; set; }
+    public string? Action { get; set; }
+    public string? Reason { get; set; }
+    public string? AssetId { get; set; }
+    public bool? IsTrashed { get; set; }
+}
+
+/// <summary>An album (<c>AlbumResponseDto</c>); only the fields we use.</summary>
+internal sealed class AlbumResponseDto
+{
+    public string? Id { get; set; }
+    public string? AlbumName { get; set; }
+}
+
+/// <summary><c>POST albums</c> request (<c>CreateAlbumDto</c>).</summary>
+internal sealed class CreateAlbumDto
+{
+    public string AlbumName { get; set; } = "";
+}
+
+/// <summary><c>{"ids":[…]}</c> (<c>BulkIdsDto</c>), for <c>PUT albums/{id}/assets</c>.</summary>
+internal sealed class BulkIdsDto
+{
+    public List<string> Ids { get; set; } = [];
+}
+
+/// <summary>One item of <c>PUT albums/{id}/assets</c>'s answer (<c>BulkIdResponseDto</c>).</summary>
+internal sealed class BulkIdResponseDto
+{
+    public string? Id { get; set; }
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+}
+
+/// <summary><c>PUT assets/copy</c> request (<c>AssetCopyDto</c>); the other flags default to true on the server.</summary>
+internal sealed class AssetCopyDto
+{
+    public string SourceId { get; set; } = "";
+    public string TargetId { get; set; } = "";
+}
+
+/// <summary>
+/// <c>DELETE assets</c> request (<c>AssetBulkDeleteDto</c>). There is deliberately no <c>force</c>
+/// property: assets always go to the trash, where they can be restored.
+/// </summary>
+internal sealed class AssetBulkDeleteDto
+{
+    public List<string> Ids { get; set; } = [];
+}
+
+/// <summary><c>GET server/version</c> body (<c>ServerVersionResponseDto</c>).</summary>
+internal sealed class ServerVersionResponseDto
+{
+    public int? Major { get; set; }
+    public int? Minor { get; set; }
+    public int? Patch { get; set; }
 }

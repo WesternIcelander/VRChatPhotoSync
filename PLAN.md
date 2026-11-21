@@ -211,7 +211,7 @@ How this list works:
   - Result mapping: 201 → `Created(id)`; 200 → `Duplicate(id)`; 401/403 → `AuthError`; 400 → `Rejected(body)`; 5xx, timeout or network error → `Transient`.
   - Move all DTOs to a `System.Text.Json` source-generated context.
   - Tests use a fake `HttpMessageHandler`: field names, date format, headers, and every status mapping.
-- [ ] **Bulk check, albums and replace helpers**, with fake-handler tests:
+- [x] **Bulk check, albums and replace helpers**, with fake-handler tests:
   - `BulkUploadCheckAsync(items)`, batched at about 500.
   - `GetOrCreateAlbumAsync(name)` (`GET albums?name=`, else `POST albums`; id cached until the name changes).
   - `AddToAlbumAsync(albumId, ids)` (`error: "duplicate"` = success).
