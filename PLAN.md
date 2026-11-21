@@ -186,241 +186,247 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 
 ## Implementation steps
 
-### 1. Project setup
-- [x] Create a solution `VRChatPhotoSync.sln` with `src/VRChatPhotoSync` (WinForms, `net10.0-windows`, `<Nullable>enable</Nullable>`, `<UseWindowsForms>true</UseWindowsForms>`) and `tests/VRChatPhotoSync.Tests` (xUnit).
-- [x] Extend `.gitignore` (it already ignores `CLAUDE.local.md`, `sample-photos/`, `config.json`, `state.json`, logs) with `bin/`, `obj/`, `publish/`, `*.user`, `.vs/`. Add `.editorconfig`.
-- [x] Add an app icon and set `AssemblyName`, `Product` and `Version`.
-- [x] Make the first git commit of the skeleton.
+How this list works:
+- **Build items** are `- [ ]` checkboxes. Each one is a single piece of work that can be tested on its own, including its unit tests. An agent can finish it without VRChat or the user. The plain sub-bullets under each item are its spec.
+- Each item is done when `dotnet build` and `dotnet test` pass. Commit and push per item (see CLAUDE.md).
+- **Manual verification** (the last section) uses `- ☐` instead of checkboxes, so the run-plan workflow skips it. Those checks need the user, VRChat, VRCX or a GUI, and are done together after the build items.
 
-### 2. Configuration
-- [x] `AppConfig` record (no photo-folder field; that comes from VRChat): `ServerUrl`, `ApiKeyProtected`, `AlbumName?` (empty = no album), `Visibility` (default `timeline`), `ExcludePrints` (default true), `UploadLayers` (default false), `StrictFileNames` (default true), `VrcxWaitSeconds` (default 10, 0 = off), `CloseButtonAction` (`Exit` | `HideToTray`, default `Exit`), `MinimizeButtonAction` (`Taskbar` | `Tray`, default `Taskbar`), `StartMinimized` (default false). There is no file-type setting, because the upload rule is fixed (`VRChat_*.png`).
-- [x] `ConfigStore`: load and save JSON (exe dir, then `%APPDATA%` fallback). Validate that the URL is absolute http/https.
-- [x] Normalise `ServerUrl`: trim any trailing `/`, and add `/api` if it is missing, so that `https://immich.example.com/` becomes `https://immich.example.com/api`.
-- [x] `SecretProtector`: DPAPI encrypt/decrypt of the API key (base64 in JSON).
-- [x] `VRChatSettings.Load()`:
-  - Find `LocalLow\VRChat\VRChat\config.json` (Known Folder API, then the `%LOCALAPPDATA%\..\LocalLow` fallback).
-  - Read it read-only and parse it leniently.
-  - Return `PictureFolder` (`picture_output_folder`, or `Path.Combine(GetFolderPath(SpecialFolder.MyPictures), "VRChat")` if it is missing, empty or the file is missing; inject the Pictures lookup so tests can fake it), passed through `Environment.ExpandEnvironmentVariables` + `Path.GetFullPath`.
-  - Also return `SplitByDate` (default true) and `Source` (`"VRChat config"` / `"default"` / `"--folder"`) to show in the UI and log.
-  - Never throw. Log and use the defaults instead.
-- [x] Parse command-line options `--folder <path>` (overrides the VRChat folder for this run only), `--server <url>`, `--minimized`, `--settings` (force the dialog). Command-line values override the file for that run only.
-- [x] Ship `config.example.json` with placeholder values (no real paths, URLs or keys).
+### A. Foundations (done)
+- [x] **Project setup.** Solution `VRChatPhotoSync.sln`, with `src/VRChatPhotoSync` (WinForms, `net10.0-windows`, nullable on) and `tests/VRChatPhotoSync.Tests` (xUnit). `.gitignore` extended with build/IDE folders. `.editorconfig`, app icon, and `AssemblyName`/`Product`/`Version` set.
+- [x] **Configuration**, with tests:
+  - `AppConfig` record: `ServerUrl`, `ApiKeyProtected`, `AlbumName?`, `Visibility` (default `timeline`), `ExcludePrints` (default true), `UploadLayers` (false), `StrictFileNames` (true), `VrcxWaitSeconds` (10, 0 = off), `CloseButtonAction` (`Exit`/`HideToTray`), `MinimizeButtonAction` (`Taskbar`/`Tray`), `StartMinimized`.
+  - `ConfigStore`: exe dir, then `%APPDATA%` fallback; URL validation.
+  - `ServerUrl` normalisation (adds `/api`).
+  - `SecretProtector` (DPAPI).
+  - `VRChatSettings.Load()`: the picture folder from VRChat's config, or the default from the Known Folder `MyPictures` + `VRChat`; also `SplitByDate` and `Source`; never throws.
+  - Command-line options `--folder`, `--server`, `--minimized`, `--settings`.
+  - `config.example.json`.
+- [x] **ImmichClient core**, with tests: a shared `HttpClient` (base address, `x-api-key`, `Accept`, 5 min timeout, User-Agent), `PingAsync()` and `GetMyApiKeyAsync()` (permission warnings).
 
-### 3. Immich API client
-- [x] `ImmichClient`: one `HttpClient` with a base address, the `x-api-key` header, `Accept: application/json`, a generous timeout for uploads (for example 5 min), and User-Agent `VRChatPhotoSync/<version>`.
-- [x] `PingAsync()` → `GET server/ping`.
-- [x] `GetMyApiKeyAsync()` → `GET api-keys/me`, which returns the permissions. Warn if neither `all` nor `asset.upload` is present, and warn about the album permissions when an album is set.
-- [ ] `UploadAsync(path, sha1, createdAt, modifiedAt)`:
-  - `MultipartFormDataContent` with `StreamContent` for `assetData` (stream from disk, do not load into memory). Set the file name and `Content-Type: image/png`.
-  - Form fields: `fileCreatedAt`, `fileModifiedAt` (ISO-8601 `"o"` format with offset), `filename`, `isFavorite=false`, and `visibility` when it is not the default.
+### B. Immich client
+- [ ] **Upload + JSON source generation.** `UploadAsync(content, fileName, sha1, createdAt, modifiedAt)`:
+  - Multipart with `assetData` (`image/png`, from a caller-supplied stream or byte buffer, so the worker can upload from a snapshot).
+  - Fields `fileCreatedAt`/`fileModifiedAt` (ISO-8601 `"o"` with offset), `filename`, `isFavorite=false`, and `visibility` when it is not `timeline`.
   - Header `x-immich-checksum: <sha1 hex>`.
-  - Map 201 → `Created(id)` and 200 → `Duplicate(id)`. Map 401/403 → `AuthError` (do not retry; show it in the UI). 400 → `Rejected` (do not retry; log the body). 5xx, timeouts and network errors → `Transient` (retry).
-- [ ] `BulkUploadCheckAsync(items)` for backfill. Send batches of about 500.
-- [ ] Album helpers: `GetOrCreateAlbumAsync(name)` (cache the id for the session) and `AddToAlbumAsync(albumId, assetIds)`. Treat `error: "duplicate"` as success.
-- [ ] Replace helpers: `CopyAssetAsync(sourceId, targetId)` → `PUT assets/copy`, and `TrashAssetsAsync(ids)` → `DELETE assets` (never `force`). These are used only for photos VRCX edits late, and only if `api-keys/me` shows `asset.copy` and `asset.delete` (or `all`).
-- [ ] JSON DTOs with `System.Text.Json` source generation (keeps a trimmed single-file build working).
+  - Result mapping: 201 → `Created(id)`; 200 → `Duplicate(id)`; 401/403 → `AuthError`; 400 → `Rejected(body)`; 5xx, timeout or network error → `Transient`.
+  - Move all DTOs to a `System.Text.Json` source-generated context.
+  - Tests use a fake `HttpMessageHandler`: field names, date format, headers, and every status mapping.
+- [ ] **Bulk check, albums and replace helpers**, with fake-handler tests:
+  - `BulkUploadCheckAsync(items)`, batched at about 500.
+  - `GetOrCreateAlbumAsync(name)` (`GET albums?name=`, else `POST albums`; id cached until the name changes).
+  - `AddToAlbumAsync(albumId, ids)` (`error: "duplicate"` = success).
+  - `CopyAssetAsync(source, target)` (`PUT assets/copy`).
+  - `TrashAssetsAsync(ids)` (`DELETE assets`, never `force`).
+  - `GetServerVersionAsync()` (`GET server/version`, for the settings window).
+- [ ] **Integration tests** (`[Trait("Category","Integration")]`) against a real server:
+  - Read `serverUrl`/`apiKey` from git-ignored `secrets.local.json` at the repo root, or from `IMMICH_TEST_URL`/`IMMICH_TEST_API_KEY`. **Skip** when neither is set. Never print the key.
+  - Cover: ping, `api-keys/me`, server version, and upload of a **generated** PNG (unique pixels per run).
+  - Upload the same bytes again and expect `duplicate`. Run the bulk check on those bytes and expect reject/duplicate.
+  - Album create/find/add on a uniquely named test album.
+  - Copy and trash, if permitted.
+  - Trash every test asset at the end (if `asset.delete`). Leave the test album, and log its name.
 
-### 4. File detection
-- [ ] `PhotoFilter`:
-  - Accept only files whose **name starts with `VRChat_` and ends with `.png`** (ignoring case). When `StrictFileNames` is on, the name must also match the exact VRChat pattern (see the research section). Read the setting each time, so a change applies to the next file.
-  - **Reject anything under the top-level `Prints\`, `Stickers\` or `Emoji\` folders.** These folders hold other users' content. The name rule already excludes those files, but the folder check stays as a second safeguard.
-  - `VrcFileName.IsLayer(name)`: true if the name, without `.png`, ends with `_Environment`, `_Player` or `_UI` (ignoring case). When `UploadLayers` is off, layer files are skipped. Check this in the worker rather than the watcher, so the decision follows the current setting and is recorded in state. Compare the first path segment relative to the root, ignoring case. Keep the folder list as a constant, in case VRChat adds more.
-  - Ignore `.lnk`, hidden and temp files, and anything outside the watch root.
-  - Apply the same filter to watcher events, the catch-up scan and the backfill. Skip those folders entirely while scanning; don't list them and then filter.
-- [ ] `VrcFileName.TryParseTimestamp(name)`: regex `^VRChat_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2}\.\d{3})_` → local `DateTimeOffset`. Fall back to the file's `CreationTime` and `LastWriteTime`.
-- [ ] `FolderWatcher`: `FileSystemWatcher` on the root with `IncludeSubdirectories = true`, `NotifyFilter = FileName | LastWrite | Size`, and `InternalBufferSize = 64 KB`. Handle `Created` and `Renamed` (to an accepted extension). Debounce duplicate events per path.
-- [ ] Handle the watcher's `Error` event (buffer overflow, or the folder was removed): recreate the watcher and trigger a catch-up scan.
-- [ ] Missing picture folder: this is normal for a new user whose default `Pictures\VRChat` doesn't exist until their first photo. Don't create it. Show `Waiting for <folder> to exist…`, check every 30 s, and start the watcher and catch-up scan as soon as it appears.
-- [ ] Watch VRChat's `config.json` (its own small `FileSystemWatcher` on that directory, debounced). If `picture_output_folder` changes, log it, update the UI, and restart the folder watcher on the new path, then run a catch-up scan there.
-- [ ] `FileReadiness.WaitUntilReadyAsync(path)`: poll until the file can be opened with `FileShare.None`/read and its size has not changed between two checks about 500 ms apart. Give up after about 60 s and re-queue.
-- [ ] `PngChunks.HasVrcxMetadata(path)`: walk the PNG chunks (8-byte signature, then length+type, seeking past the data) and return true if there is an `iTXt` or `tEXt` chunk whose keyword is `Description`. Open with `FileShare.ReadWrite | FileShare.Delete` so the check never blocks VRCX's rewrite. Treat a truncated or invalid PNG as "not ready".
-- [ ] `VrcxSettle.WaitAsync(path, timeout)`:
-  - Return straight away if `HasVrcxMetadata`, if the timeout is 0, or if the file is more than 2 min old.
-  - Otherwise poll every 1 s. Return when the chunk appears, or the file changes (size/mtime) and stays the same for 2 s, or the timeout runs out.
-  - Run the settle wait for several files at once (a few photos taken in a row shouldn't each wait 30 s one after another). Only the upload itself is single-file. Show `Waiting for VRCX metadata… (N)` in the status line.
-- [ ] Handle `Changed` events too (the watcher already has `NotifyFilter.LastWrite | Size`). For a path that is already in state with a different size or mtime, enqueue it as a **re-upload** (see step 5). For paths not in state, `Changed` just debounces into the normal queue.
+### C. File handling (pure logic, no watcher yet)
+- [ ] **File names and filter**, with tests:
+  - `VrcFileName`: `TryParseTimestamp` (local time from the name; falls back to the file times), `TryParseSize` (`_<W>x<H>`), `IsLayer` (`_Environment`/`_Player`/`_UI`, ignoring case), and `BaseName` (the name without the layer suffix, for finding siblings).
+  - `PhotoFilter.Accepts(root, path, strictNames)`:
+    - The name must be `VRChat_*.png` (ignoring case).
+    - When `strictNames` is on, it must match the exact regex in the research section (allowing a layer suffix, a bare `_`, or `_wrld_<uuid>`).
+    - Reject anything whose first segment under the root is `Prints`, `Stickers` or `Emoji` (ignoring case; keep the folder list as a constant).
+    - Reject hidden and temp files.
+  - `PhotoFilter.EnumerateCandidates(root)`: walk recursively **including the root**, skipping the excluded folders without listing them.
+  - Test cases (all from the plan): layer names, `vrchat_…PNG`, `.jpg`, `.lnk`, excluded folders, root vs month folder, strict on/off, `- Copy.png` (rejected), the trailing-`_` copy (accepted), `_wrld_<uuid>` (accepted), `(1).png`/`_edited.png`/missing milliseconds/layer+world (rejected).
+- [ ] **PNG helpers**, with generated-PNG tests:
+  - `ImageSize.TryRead(path)` (IHDR without decoding).
+  - `PngChunks.HasVrcxMetadata(path)`: an `iTXt`/`tEXt` chunk with keyword `Description`. Open with `FileShare.ReadWrite | FileShare.Delete`. A truncated or invalid PNG → "not ready", no exception.
+  - A test helper that inserts a `Description` chunk into a PNG (used later to simulate VRCX).
+- [ ] **Print detection**, with generated-fixture tests:
+  - Move `print_mask.png` to `docs/`.
+  - `PrintLayout` constants: photo (64,69)–(1983,1148), caption (0,1159)–(2047,1435), inclusive.
+  - `PrintDetector.IsPrint(path)`: only 2048×1440 (checked via the name or IHDR first). Otherwise `Bitmap` + `LockBits`, and border pixels with min channel ≥ 240 must make up ≥ 99.9%, with early exit.
+  - Tests: a made-up print → true; full-canvas noise → false; tinted border (230) → false; a 1920×1080 image → false without decoding; a few stray border pixels → true.
+- [ ] **Upload state**, with tests:
+  - `UploadState` / `state.json` next to the config. Contents:
+    - `pictureFolder`
+    - `lastScanUtc`
+    - an entry map `relativePath → {size, mtimeUtc, sha1, assetId, skipped?: "print"|"layer"}`
+    - `session {startUtc, uploaded, duplicates, failed, printsSkipped, layersSkipped, lastFile}` and `heartbeatUtc`
+  - Atomic save (write temp, then `File.Replace`/move). A corrupt or missing file → a fresh state plus a log warning.
+  - Helpers: `IsUnchanged(path, size, mtime)`, `MoveEntry(oldPath, newPath)` (for renames), and `ResolveSession(now)` (continue if the heartbeat is under 2 min old, else start a new session).
+  - Tests: round-trip, atomic save, corrupt file, session continue (30 s) vs new (10 min), and a folder change → treated as a first run.
 
-### 4b. Print detection
-- [ ] Move `print_mask.png` to `docs/print_mask.png`. Add `PrintLayout` constants: canvas 2048×1440, photo rectangle (64,69)–(1983,1148), caption rectangle (0,1159)–(2047,1435), all inclusive.
-- [ ] `ImageSize.TryRead(path)`: read the PNG `IHDR` width and height without decoding. Use it when the file name has no `_<W>x<H>` part, or to double-check the name.
-- [ ] `PrintDetector.IsPrint(path)`:
-  - Return false straight away unless the size is 2048×1440.
-  - Otherwise decode with `Bitmap`, use `LockBits` (32bppArgb), and copy the pixels in one go.
-  - Count the border pixels outside both rectangles that have min(R,G,B) ≥ 240.
-  - It is a print if the white share is ≥ 99.9%. Exit early once enough non-white pixels make that impossible.
-- [ ] In `UploadWorker`, first skip layer files when `UploadLayers` is off. This check is by name only, so it is cheap. Record `skipped: "layer"` and increment a "layers skipped" counter.
-- [ ] Call the print check in `UploadWorker` after the readiness check and before the SHA1, only when `ExcludePrints` is on. A print → record `skipped: "print"` in state, increment the session's "prints skipped" counter, and log it. Don't upload.
-- [ ] If detection fails (corrupt or locked file), log it and **upload anyway**. Failing toward uploading means no real photo is ever lost.
+### D. Watching and settling
+- [ ] **Folder watcher**, with tests where feasible (temp folders):
+  - `FolderWatcher` on the root: `IncludeSubdirectories`, `NotifyFilter = FileName | LastWrite | Size`, 64 KB buffer.
+  - Raises debounced `FileAppeared(path)` (from Created/Changed) and `FileRenamed(old, new)`.
+  - On `Error`: recreate the watcher and raise `ResyncNeeded`.
+  - Missing folder: report a `Waiting for <folder> to exist…` state, poll every 30 s, start when it appears, and never create it.
+  - `VRChatConfigWatcher`: watch VRChat's `config.json` directory (debounced). Re-run `VRChatSettings.Load()`, and raise `PictureFolderChanged` when the folder changes. Never write to that file.
+- [ ] **Readiness and VRCX settle**, with fake-clock/probe tests:
+  - `FileReadiness.WaitUntilReadyAsync`: can be opened and the size is stable across about 500 ms. Give up after about 60 s (the caller re-queues).
+  - `VrcxSettle.WaitAsync(path, timeout)`. Return straight away for: a layer file, an existing layer sibling, `HasVrcxMetadata`, timeout 0, or a file more than 2 min old.
+  - Otherwise poll every 1 s until: the chunk appears, **a layer sibling appears**, the file changes and stays the same for 2 s, the file is renamed (follow the new path), or the timeout runs out.
+  - Many files can be settled at once.
+  - Tests: every exit path, including a sibling at 150 ms and a chunk at 1 s.
 
-### 5. Upload queue and state
-- [ ] `UploadState` (`state.json`): `lastScanUtc`, plus a map of `relativePath → {size, mtimeUtc, sha1, assetId}`. Use atomic save (`File.Replace` / write temp then move).
-- [ ] `UploadQueue`: an unbounded `Channel<string>`, with a `HashSet` so the same path is never queued twice.
-- [ ] `UploadWorker` (one consumer): readiness → layer/print checks → **VRCX settle wait** → skip if already in state with the same size and mtime → SHA1 (streamed, *after* the settle wait so the hash matches the final file) → upload → add to album if set → save state → raise `Uploaded(fileName, status)`.
-- [ ] Re-upload path (the file changed after it was uploaded): upload the new version. If it is `created`, and the old asset id differs, and the key has `asset.copy` + `asset.delete`: copy old → new, then trash old. Otherwise log "kept both versions". Update the state entry. Don't count it as a new upload in the session counter; show `Updated <file> (VRCX metadata)` instead.
-- [ ] Retry transient failures with exponential backoff (5 s, 15 s, 1 min, 5 min, then every 5 min). Keep the item at the front of the queue so order is kept. Pause the queue on `AuthError` until the settings change.
-- [ ] Startup catch-up: enumerate the folder recursively, **including the root**, for accepted files where `max(CreationTimeUtc, LastWriteTimeUtc) > lastScanUtc − 1 min` and that are not already in state. Using the creation time as well catches files that were copied or moved in, because a copy keeps the old modified time but gets a new creation time. Enqueue them oldest first, then set `lastScanUtc` = start time. Always scan the whole tree rather than relying on `SplitByDate`. The setting only describes where *new* photos go, and a full listing of a few thousand files takes milliseconds.
-- [ ] Record the picture folder in `state.json` and store state paths relative to it. If the folder differs from last run (the user changed VRChat's setting), log it and treat the new folder's catch-up as a first run (`lastScanUtc` = now). This avoids a surprise mass upload, and "Upload existing photos…" can still be used.
-- [ ] Optional full backfill command: enumerate all files → SHA1 → `bulk-upload-check` → enqueue only `accept` results. Record `reject/duplicate` ones in state so they are skipped later. Show progress in the window.
+### E. Upload pipeline
+- [ ] **Upload queue and worker**, with fake-client tests:
+  - `UploadQueue`: a `Channel<string>`, de-duplicated by path.
+  - `UploadWorker` pipeline per file:
+    1. Filter.
+    2. Readiness.
+    3. Layer skip (`UploadLayers` off → record `skipped:"layer"`).
+    4. Print skip (`ExcludePrints` on → record `skipped:"print"`; a detection exception → upload anyway).
+    5. Settle (several files can wait at once).
+    6. Skip if unchanged in state.
+    7. **Snapshot**: read into memory, with size/mtime checked before and after. If it changed, settle again.
+    8. SHA1 of the snapshot.
+    9. Upload from the snapshot.
+    10. Add to the album if one is set.
+    11. Save state.
+    12. Raise events for the UI (uploaded, duplicate, skipped, failed, status text).
+  - Retry `Transient` with backoff (5 s, 15 s, 1 min, 5 min, then every 5 min) without losing order. `AuthError` pauses the queue until `Resume()`. `Rejected` → log and mark it failed.
+  - Reads the settings live, so checkbox changes apply to the next file.
+  - Tests: layer/print on/off, detection-exception upload, unchanged skip, retry/backoff, auth pause/resume, snapshot change → re-settle, album add.
+- [ ] **Renames and late VRCX edits**, with tests:
+  - `FileRenamed`: if the old path is pending or settling, switch to the new path. If it is in state, call `MoveEntry`. Never upload the short-lived original name.
+  - A file in state that changed (size/mtime differ) → re-upload. If the result is `created` with a new id: when `api-keys/me` grants `asset.copy` and `asset.delete` (or `all`), copy old → new, then trash old; otherwise log "kept both versions". Update state.
+  - It doesn't count as a new upload; show `Updated <file> (VRCX metadata)` instead.
+  - Tests: rename during settle (the `_wrld_` and bare `_` forms), rename after upload, re-upload with and without permissions, a `duplicate` result → no copy or trash.
+- [ ] **Catch-up scan and backfill**, with temp-folder tests:
+  - Startup catch-up: walk the candidates (root + months). Enqueue files where `max(CreationTimeUtc, LastWriteTimeUtc) > lastScanUtc − 1 min` that aren't in state, oldest first. Then set `lastScanUtc` = start.
+  - First run, or a picture folder different from the one in state → `lastScanUtc` = now (no mass upload).
+  - `ResyncNeeded` and `PictureFolderChanged` trigger a catch-up.
+  - Backfill (Upload existing photos): all candidates minus prints/layers per the settings → SHA1 → bulk check → enqueue `accept`, and record `reject` as already present. Report progress (`n/N`).
+  - `CountExistingAsync()` for the first-setup checkbox (applies the same rules).
+  - Tests: files in the root and month folders, copied-in old-mtime files are found, excluded folders are skipped, a folder change doesn't trigger a mass upload, backfill uses the bulk check.
+- [ ] **Logging.**
+  - Rolling `logs\photosync-YYYYMMDD.log` next to the config, kept 7 days.
+  - Record start/stop (with the picture folder and its source), each queued file, skip reasons, settle wait time, upload result + asset id, retries and errors.
+  - The API key is **never** logged. Add a test that runs a fake upload and greps the log for the key.
+  - Wire the logger through the existing components.
 
-### 6. UI (WinForms)
-- [ ] `MainForm`: a small fixed window (about 360×140), not resizable. It shows:
-  - Status line: `Watching D:\Photos\VRChat` / `Uploading…` / `Retrying in 15s (server unreachable)` / `API key rejected — click "Immich server…"` / `Not set up — click "Immich server…"`.
-  - **Uploaded this session: N** (also show duplicates skipped and failures if any).
-  - **Last: VRChat_2025-08-31_12-58-01.123_1920x1080.png** (truncated with an ellipsis, full name in a tooltip; clicking opens it in Explorer).
-  - Queue length when it is greater than 0.
-  - **☑ Skip prints** checkbox (bound to `ExcludePrints`, saved immediately; affects files queued from now on), and a "Prints skipped: N" count next to it.
-  - **☐ Upload photo layers** checkbox (bound to `UploadLayers`, saved immediately). Its tooltip says "Also upload the _Environment, _Player and _UI files from multi-layer photos". A "Layers skipped: N" count is shown when N > 0.
-  - Buttons: **Immich server…** (opens the connection window below), **Open folder**, and a ⋯ menu:
+### F. User interface
+- [ ] **Main window**:
+  - Small fixed `MainForm` (about 360×160). It shows:
+    - the status line (watching / waiting for folder / waiting for VRCX (N) / uploading / retrying in Ns / key rejected / not set up)
+    - "Uploaded this session: N" (plus duplicates and failures if any)
+    - "Last: <file>" (ellipsis, tooltip; click → select it in Explorer)
+    - the queue length when > 0
+  - Checkboxes ☑ Skip prints (+ count) and ☐ Upload photo layers (+ count when > 0). Both save to config immediately.
+  - Buttons **Immich server…** and **Open folder**, and a ⋯ menu:
     - Upload existing photos…
-    - Window behaviour ▸ with two groups of radio items, both saved immediately:
-      - "Close button: Exit app / Hide to tray".
-      - "Minimize button: Taskbar / Tray".
-      - Plus a checkable "Start minimized" item.
+    - Window behaviour ▸ (close: Exit/Hide to tray; minimize: Taskbar/Tray; Start minimized)
     - Open log
     - Open Immich
-- [ ] Marshal all UI updates through `SynchronizationContext` / `BeginInvoke`. Workers never touch controls.
-- [ ] `ServerSettingsForm` ("Immich server" window): a modal dialog opened by the **Immich server…** button, and automatically when no server is set up. Layout:
-  ```
-  ┌ Immich server ─────────────────────────────────────┐
-  │ Server URL: [https://immich.example.com            ] │
-  │ API key:    [••••••••••••••••••••••••••] [Show]     │
-  │             How do I get an API key? (link)        │
-  │ [Test connection]  ✔ Connected — Immich 3.4.2,     │
-  │                      key can upload                │
-  │ Album:      [VRChat              ] (optional)      │
-  │ ☐ Also upload my 2,431 existing photos  (first     │
-  │   setup only)                                      │
-  │ ▸ Advanced (visibility, VRCX wait, exact names)    │
-  │ Photo folder: D:\Photos\VRChat (from VRChat)        │
-  │                               [Save]   [Cancel]    │
-  └────────────────────────────────────────────────────┘
-  ```
-  - **Server URL:** filled in from config. Accepts `https://host`, `https://host/` or `https://host/api`, and stores the normalised `/api` form, but shows the address as the user typed it.
-  - **API key:** a password box with a Show toggle.
-    - When a key is already saved, the box is blank, with the hint text "(saved — leave blank to keep)". The saved key is never shown again or copied back into the box.
-    - A new key is DPAPI-encrypted when saved.
-    - Paste is trimmed of whitespace.
-  - **"How do I get an API key?"** opens the server's API-key settings page, `<server root>/user-settings?isOpen=api-keys`, in the browser. Use the server root, not the `/api` URL. The link's tooltip also gives the manual route: profile picture (top right) → Account Settings → API Keys. If no URL has been entered yet, it opens the Immich docs page instead. Below it, the needed permissions are listed: `asset.upload`, plus the album permissions if an album is set.
-  - **Test connection:** runs in the background with the button disabled. It calls `server/ping` then `api-keys/me` and shows the result inline, one line each:
-    - Can't reach server.
-    - Not an Immich server (no `pong`).
-    - Key rejected (401).
-    - Key missing `asset.upload`.
-    - ✔ Connected (with the server version from `server/version`, and the key's name).
-  - **Save:** checks that the URL is valid. It runs Test connection automatically if that hasn't been done yet. If the test fails, it asks "Save anyway?", because the server may just be offline. Then it writes the config and restarts the Immich client. If uploads were paused by an auth error, it resumes them.
-  - **Album** (optional): blank → no album. When it is set, Test connection also checks for the `album.read`, `album.create` and `albumAsset.create` permissions. When it is changed, the cached album id is cleared.
-  - **"Also upload my N existing photos"**: shown only when **no API key has been saved yet**, meaning first setup.
-    - N is the number of files that pass the filter, leaving out prints (if Skip prints is on) and layer files (if Upload photo layers is off). It is counted in the background when the window opens.
-    - It is unticked by default.
-    - If it is ticked when Save succeeds, a full backfill is queued (step 5). If it is unticked, only new photos from now on are uploaded.
-  - **Advanced** (collapsed by default):
-    - Visibility.
-    - "Wait for VRCX metadata up to [10] s" (0 = don't wait).
-    - **☑ Only upload files with exact VRChat names**, bound to `StrictFileNames`. Its tooltip says "Skips edited or copied files such as 'VRChat_… - Copy.png'".
-  - **Photo folder:** shown read-only (for example `D:\Photos\VRChat (from VRChat settings, split by month)`) with an "Open VRChat config folder" link. There is no folder picker, because the folder comes from VRChat.
-- [ ] Tray icon (`NotifyIcon`): always present while the app runs. Its tooltip shows the session count, double-click restores the window, and its menu has Show / Exit.
-- [ ] Window behaviour settings:
-  - **Minimize button:** `Taskbar` → a normal minimize. `Tray` → hide the window, leaving the tray icon.
-  - **Close button:** `Exit` → exit. `HideToTray` → hide the window; exiting is done from the tray menu.
-  - **Important:** only the user's **title-bar X** may be redirected to the tray. Override `WndProc`, and treat `WM_SYSCOMMAND` / `SC_CLOSE` (the X button or Alt+F4) as the "close button". A plain `WM_CLOSE` from another process (VRCX, `taskkill` without `/F`) or Windows shutting down **always exits**. Otherwise "Hide to tray" would stop VRCX from closing the app when VRChat exits.
-  - `--minimized` or `StartMinimized` starts the window minimized, to the taskbar or tray depending on the minimize setting.
-- [ ] Set the window title to show the count (for example `PhotoSync — 3 uploaded`) so it can be read from the taskbar.
+  - Title `PhotoSync — N uploaded`.
+  - All updates go through `BeginInvoke`.
+  - Keep the presentation logic in a testable `MainViewModel` (status text, counters) with unit tests. The form only binds to it.
+- [ ] **Immich server window** (`ServerSettingsForm`), as specified in the design section (layout in "Reference: settings window layout" at the end):
+  - URL (accepts with or without `/api`).
+  - API key: password box + Show toggle. A saved key is never shown again; blank = keep. Trim whitespace.
+  - "How do I get an API key?" link → `<server root>/user-settings?isOpen=api-keys` (tooltip with the manual route; Immich docs if no URL yet), plus the list of required permissions.
+  - Test connection in the background: can't reach / not Immich / key rejected / missing `asset.upload` / ✔ version + key name, plus the album and optional copy/delete permission notes.
+  - Album field.
+  - First-setup-only "Also upload my N existing photos" (counted in the background, unticked by default).
+  - Advanced: visibility, VRCX wait seconds, exact-names checkbox.
+  - Read-only photo folder with its source, plus an "Open VRChat config folder" link.
+  - Save: validate, auto-test, "Save anyway?" if the test fails, write config, restart the client, resume after an auth pause, start the backfill if it was ticked.
+  - Put the validation/test-result logic in a testable class, with unit tests against a fake client.
+- [ ] **Tray and window behaviour**:
+  - `NotifyIcon` always present (tooltip shows the count; double-click restores; menu has Show/Exit).
+  - `WndProc` override: only `WM_SYSCOMMAND`/`SC_CLOSE` follows `CloseButtonAction`. A plain `WM_CLOSE` and session end always exit. `SC_MINIMIZE` follows `MinimizeButtonAction`.
+  - `--minimized`/`StartMinimized` start minimized according to the minimize setting.
+  - Window position saved in config.
+  - Test: send `SC_CLOSE` and `WM_CLOSE` to a form with `HideToTray` (STA test) → hides vs exits.
 
-### 7. App lifecycle
-- [ ] `Program.Main`: single-instance mutex → load config → show settings if needed → start client, watcher, catch-up scan, and worker → `Application.Run(MainForm)`.
-- [ ] Note that VRCX **kills** the process, so the graceful path only applies when the user exits or Windows shuts down. Correctness must never depend on it. On graceful close (`FormClosing`, `WM_CLOSE`, or `SessionEnding`), stop accepting new files and give the upload in progress up to about 10 s to finish, then exit. Everything else is picked up by the next catch-up scan.
-- [ ] Mutex: treat `AbandonedMutexException` as acquired, and wait up to about 5 s for the mutex before handing off to the running copy.
-- [ ] Session restore: load `session` from state, continue it if `heartbeatUtc` is under 2 min old, and refresh the heartbeat every 30 s and after each upload (atomic write).
-- [ ] Global exception handlers (`Application.ThreadException`, `AppDomain.UnhandledException`, `TaskScheduler.UnobservedTaskException`) write to the log and show the error in the status line instead of crashing.
+### G. App lifecycle and packaging
+- [ ] **App lifecycle wiring**, with tests:
+  - `Program.Main` order:
+    1. Single-instance mutex. `AbandonedMutexException` = acquired; wait up to about 5 s; otherwise signal the running copy to show its window, then exit.
+    2. Global exception handlers (log + status line).
+    3. Load config, VRChat settings and state; resolve the session.
+    4. Open the server window if not set up.
+    5. Start the client, watchers, catch-up and worker.
+    6. Heartbeat every 30 s and after uploads.
+    7. `Application.Run`.
+  - Graceful close (user exit or Windows shutdown only; VRCX kills): stop intake, give the current upload up to about 10 s, save state.
+  - Tests: an abandoned mutex (a child process acquires the mutex and is killed, then the next acquire succeeds), and session continuation after a simulated kill.
+- [ ] **Agent-run end-to-end smoke test** (no VRChat or GUI clicks needed). Use the real server from `secrets.local.json`. Write the test `config.json` with the key DPAPI-protected by code, never echoed.
+  - Run the built exe with `--folder <scratch> --minimized`, copying files from `sample-photos\` (see CLAUDE.md). Check results via the log and the Immich API:
+    - one photo uploads with the right date and name; a renamed copy → duplicate
+    - a slow write is waited for
+    - month folder and root both detected
+    - a print is skipped (and uploaded with `ExcludePrints` off)
+    - a multi-layer set: 1 uploaded, 3 skipped, and no 10 s wait
+    - album add
+    - `taskkill /F` during an upload + more copied-in files + restart → everything caught up, and the session count continues
+    - a wrong URL → retries and recovers; a wrong key → paused
+    - a late `Description` chunk added with the test helper → replace (new asset in the album, old asset trashed)
+    - `--folder` absent → the log shows the folder from VRChat's config (read only)
+  - Also run `PrintDetector` over every `*_2048x1440.png` in `sample-photos\` (all prints) and a sample of normal photos (none). Run the strict filter over `sample-photos\` and expect only known rejects.
+  - Trash all test assets afterwards. Record the results in the item's notes.
+- [ ] **Publish** a single-file self-contained build:
+  - `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true` into `publish/`. No trimming, because WinForms doesn't support it.
+  - Add `tools/publish.ps1`.
+  - Check that the exe starts from a fresh empty folder (no config → it waits in the not-set-up state without crashing; check via the log) and exits cleanly with `taskkill`.
+  - Record the size.
+- [ ] **README.md**:
+  - what it does
+  - Immich API key creation (`<server>/user-settings?isOpen=api-keys`, or profile → Account Settings → API Keys) and the required/optional permissions
+  - first-run setup
+  - the photo folder comes from VRChat's settings
+  - what gets uploaded and skipped (other users' Prints/Stickers/Emoji, prints, layers, exact names)
+  - VRCX metadata waiting
+  - VRCX App Launcher: a shortcut in `%AppData%\VRCX\startup\` (`desktop\`/`vr\`); VRChat must start after VRCX; auto-close kills the app; the several-clients behaviour
+  - command-line options
+  - where config, state and logs live
+  - building from source
 
-### 8. Logging
-- [ ] A simple rolling text log (`logs\photosync-YYYYMMDD.log` next to the config, keep 7 days). Record start/stop, every queued file, the result and asset id for each upload, retries and errors. **Never log the API key.**
-
-### 9. Tests
-- [ ] `VrcFileName` parsing (valid names, odd resolutions, names that aren't VRChat names). The timestamp and size must also parse from layer names (`…_3840x2160_Player.png`).
-- [ ] `VrcFileName.IsLayer`: true for `_Environment`, `_Player`, `_UI` and `_ui`. False for the combined photo, and for a name that only contains `Player` elsewhere.
-- [ ] `UploadWorker`: layer files are skipped when `UploadLayers` is off and uploaded when it is on. The combined photo is always uploaded.
-- [ ] `VRChatSettings` (with the config path injectable, using temp files):
-  - A full file gives the folder and split value.
-  - The key is missing → `<fake Pictures>\VRChat`, split = true. With a fake Pictures folder somewhere other than `%USERPROFILE%`, check that the moved location is used.
-  - The Pictures lookup returns an empty string → `%USERPROFILE%\Pictures\VRChat`.
-  - The file is missing → defaults.
-  - Invalid JSON, trailing commas, or comments → no exception, defaults where needed.
-  - `picture_output_split_by_date: false` is read correctly.
-  - A path with environment variables is expanded.
-- [ ] Catch-up scan finds new files in the root **and** in month subfolders.
-- [ ] `ServerUrl` normalisation (`https://x/`, `https://x/api`, `https://x/api/`).
-- [ ] `PhotoFilter`:
-  - Accepts `VRChat_…png` and `vrchat_…PNG`, in the root and in month folders.
-  - Rejects `.jpg`, names without the `VRChat_` start, and `.lnk` and temp files.
-  - Rejects `Prints\…`, `stickers\…` and `Emoji\…` at the top level, even when the name starts with `VRChat_`.
-  - With `StrictFileNames` on:
-    - Accepted: normal photos, `_Environment`/`_Player`/`_UI` layers, `_wrld_<uuid>` names, a bare trailing `_` (a VRCX rename with no world), and 7680x4320 / 2048x1440 sizes.
-    - Rejected: `… - Copy.png`, `… (1).png`, `…_edited.png`, a missing milliseconds part, and a layer *and* a world ID together.
-    - With it off, all of those `VRChat_*.png` names are accepted.
-- [ ] Window behaviour: a `WM_SYSCOMMAND`/`SC_CLOSE` with `HideToTray` hides the window, while a plain `WM_CLOSE` always exits.
-- [ ] `ImmichClient` against a fake `HttpMessageHandler`: check the multipart field names and date format, the headers (`x-api-key`, `x-immich-checksum`), and the 201/200/401/400/500 mapping.
-- [ ] `UploadState` round-trip and atomic save.
-- [ ] Integration tests (`[Trait("Category","Integration")]`) against a real server: ping, `api-keys/me`, upload of a **generated** PNG (then the same bytes again → `duplicate`), and album create/add. They read `serverUrl`/`apiKey` from the git-ignored `secrets.local.json` at the repo root, or from the `IMMICH_TEST_URL`/`IMMICH_TEST_API_KEY` environment variables, and are **skipped** when neither is set (so CI and other contributors don't need a server). Trash the test assets afterwards (`DELETE /api/assets`) if the key has `asset.delete`.
-- [ ] `PrintDetector`, using fixtures **generated in the test** (no real photos committed, because real prints include the user's name and world):
-  - A made-up print: a white 2048×1440 canvas, random noise in the photo area, and black "text" pixels in the caption strip → print.
-  - Noise over the whole canvas at 2048×1440 → not a print.
-  - The made-up print with the white border tinted to 230 → not a print.
-  - A 1920×1080 image → not a print, without being decoded.
-  - A few stray non-white border pixels (under the tolerance) → still a print.
-- [ ] `ImageSize.TryRead` on generated PNGs of a few sizes.
-- [ ] `PngChunks.HasVrcxMetadata`: generated PNGs with no text chunks, XMP only, `iTXt Description`, `tEXt Description`, and a truncated file. No exceptions.
-- [ ] `VrcxSettle` with a fake clock and file probe: returns straight away for layer files and when a layer sibling exists, returns straight away when the chunk is there, returns when it appears at about 1 s, returns when a layer sibling appears at about 150 ms, returns at the timeout when it never appears, and returns after the file changes and stays the same. Old files skip the wait.
-- [ ] Re-upload: with copy/delete permission → upload, copy, trash and update state. Without it → upload, keep both, and log a warning. A `duplicate` result (identical bytes) → no copy or delete.
-- [ ] `UploadWorker`: a print is skipped when `ExcludePrints` is on and uploaded when it is off. A detection exception still uploads.
-- [ ] `UploadWorker` with a fake client: retries transient errors, skips files already uploaded, pauses on auth errors.
-- [ ] Single instance: a test that acquires the mutex in a child process and kills it, then checks that the next acquire succeeds (abandoned mutex = acquired).
-- [ ] Session restore: a heartbeat 30 s old → the session continues. A heartbeat 10 min old → a new session.
-
-### 10. Manual end-to-end check against a real Immich server
-> Real test files: the photos taken for this plan on 2026-11-21 (the multi-layer sets, the `_` and `_wrld_…` renames) and the prints have been **removed from `D:\Photos\VRChat`**. Copies are in `sample-photos\2026-09…2026-11\` (git-excluded and temporary; see CLAUDE.md). Copy files from there into the scratch folder. Paths below like `2026-11/…` refer to `sample-photos\2026-11\…`.
-
-- [ ] Create a **dedicated API key** with only `asset.upload` (plus album permissions if used).
-- [ ] Start the app with no `--folder` and check that it shows `D:\Photos\VRChat (from VRChat settings)`.
-- [ ] Point the app at a scratch folder with `--folder` (not the real camera roll). Copy in one VRChat PNG and check that it appears in Immich with the right capture date and file name, and that the window count = 1.
-- [ ] Copy the same file again under a new name and check that the result is a `duplicate` and the count doesn't go up as an upload.
-- [ ] Copy in a large file slowly (or hold it open) and check that the app waits for the write to finish before uploading.
-- [ ] Create a new month subfolder and drop a file in it; check that it is detected. Then drop one straight into the root (as `split_by_date: false` would) and check that it is detected too.
-- [ ] Start the folder lookup against a temporary VRChat config path that doesn't exist, and check that it falls back to `<GetFolderPath(MyPictures)>\VRChat` (the moved Pictures folder, not `%USERPROFILE%\Pictures`) and waits for that folder to exist. Never change the real VRChat `config.json` for this test.
-- [ ] Copy in a real print (for example `2026-11/VRChat_2026-11-01_22-28-32.600_2048x1440.png`) with "Skip prints" ticked, and check that it is skipped and counted. Untick the box, copy in another print, and check that it uploads.
-- [ ] Run the detector over every local `*_2048x1440.png` (69 files; all should be detected as prints) and a sample of normal photos (all should be detected as not prints).
-- [ ] Kill the process during an upload, add more files (copied in, so they have old modified times), restart, and check that the catch-up scan uploads them all.
-- [ ] With the app watching the real `D:\Photos\VRChat`, check in the log that nothing under `Prints\`, `Stickers\` or `Emoji\` is queued.
-- [x] Run the strict-name filter over every `VRChat_*.png` on disk (not in the excluded folders). Done 2026-11-21 with the first version of the pattern: 611 files, 2 rejected, both hand-edited copies:
-  - `2025-12\VRChat_2025-12-25_21-08-42.649_3840x2160 - Copy.png`
-  - `2025-04\VRChat_2025-04-20_03-28-00.594_3840x2160_.png`
-
-  No real VRChat photo failed the pattern. Since a bare trailing `_` is now allowed (VRCX renames), the 2025-04 copy passes as well. This is a known limitation: the name can't tell it apart from a VRCX rename. Use both names as test cases (`- Copy` rejected, `_` accepted).
-- [x] Re-run with the final pattern (2026-11-21): 614 files, 1 rejected (the `- Copy.png`). The `_` and `_wrld_<uuid>` renames pass.
-- [ ] With VRCX "modify filename" on, take a photo with the app running. Check that exactly one asset is uploaded, under the `_wrld_…` name, with `Description` present, and that the short-lived original name is never uploaded.
-- [ ] In the Immich server window, check Test connection with: the correct URL and key (✔), a wrong key (key rejected), a URL that doesn't exist (can't reach server), and a website that isn't Immich (not an Immich server). Check that saving with the key box blank keeps the existing key.
-- [ ] First setup with "Also upload my existing photos" ticked, pointed at a scratch folder with a few old photos: check that they upload. Repeat with it unticked and check that only new photos upload. Check that the checkbox doesn't appear once a key is saved.
-- [ ] Copy the 4-file multi-layer set (`VRChat_2026-11-21_21-03-08.102_3840x2160*.png`) into the scratch folder with "Upload photo layers" unticked, and check that 1 file uploads and 3 are skipped. Tick it, copy in another set, and check that all 4 upload.
-- [ ] Set an album name and check that photos land in it, and that the album is created if it is missing. Clear the name and check that uploads go in with no album.
-- [ ] With "Close button: Hide to tray" set, check that the X button hides to the tray, and that `taskkill /im VRChatPhotoSync.exe` (no `/F`) and VRCX closing VRChat still exit the app.
-- [ ] Stop network access or use a wrong URL, and check that it retries and recovers. Use a wrong key and check that the auth error shows in the UI.
-- [ ] Take a real photo in VRChat with the app watching `D:\Photos\VRChat` and VRCX running. Check in the log how long the wait for VRCX's `Description` chunk took. Download the asset from Immich and check that its `Description` chunk is present (meaning the final version was uploaded).
-- [ ] Take a photo with VRCX closed and check that it uploads after the 10 s timeout. Then simulate a late VRCX edit by adding a `Description` chunk to the file with a test helper, and check that the replace runs: new asset in the same album, old asset in the trash.
-- [x] Measure the VRCX delay and the multi-layer file order live (done 2026-11-21, before implementation; see the research summary). A copy of the monitor script is saved as `tools/watch-vrcx.ps1` for re-measuring later.
-- [ ] Take a multi-layer photo with the app running, and check that the combined photo uploads within about 1 s (no 10 s wait) and that the layers follow the "Upload photo layers" setting.
-
-### 11. Packaging and distribution
-- [ ] `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true`, so the person receiving it does not need the .NET runtime installed. This standalone exe is the only build that is shipped. Consider `-p:EnableCompressionInSingleFile=true` to shrink it. Note that WinForms doesn't support trimming, so expect about 70 MB.
-- [ ] Check that the published exe runs from a fresh folder with no config, opens the Immich server window on first run, and is fully set up through the UI with no file editing. Check that it then uploads, and that the key in `config.json` is encrypted rather than plain text.
-- [ ] Write `README.md`: what it does, how to create an Immich API key (and which permissions), first-run setup, the fact that the photo folder comes from VRChat's own settings (change it in VRChat, not here), how to add it in VRCX (a shortcut in `%AppData%\VRCX\startup\`, see step 12), the command-line options, and where the config, state and logs are kept.
-- [ ] Optional: a GitHub Actions workflow that builds and attaches the single-file exe to a release.
-
-### 12. VRCX hookup
-- [ ] Put a shortcut to the published exe (with `--minimized` if wanted) in `%AppData%\VRCX\startup\`. Start VRChat **after** VRCX and check that PhotoSync launches. Exit VRChat and check that PhotoSync is killed, that `state.json` is intact, and that the next start catches up anything left pending.
-- [ ] With two VRChat clients: close the first one and check that PhotoSync is killed and relaunched. Check that it starts cleanly (no "already running" exit), that the session count carries on from before, and that a photo taken around the kill is still uploaded.
-- [ ] README: document the shortcut folder (and `desktop\` / `vr\`), that VRChat must start after VRCX, and that VRCX's App Launcher and auto-close are on by default.
+  Use example values only (public repo).
+- [ ] **Release workflow** (GitHub Actions): on a `v*` tag, build, test (integration tests skip without secrets) and publish, then attach the exe to a GitHub release. Validate the YAML locally (`dotnet` steps run the same as `tools/publish.ps1`). Don't create a tag.
 
 ---
+
+## Manual verification (with the user, after the build items)
+These use `- ☐` so the run-plan workflow skips them. Real files come from `sample-photos\` (temporary, git-excluded).
+
+- ☐ First run of the published exe from a fresh folder: the Immich server window opens. Set it up through the UI only, with a **dedicated key**. Check that the key in `config.json` is encrypted.
+- ☐ Test connection results: correct (✔), wrong key, an address that doesn't exist, a website that isn't Immich. Saving with the key box blank keeps the key.
+- ☐ "Also upload my N existing photos" on first setup, ticked (uploads) and unticked (only new photos). It is hidden once a key is saved.
+- ☐ Main window: the counters, "Last" click, Skip prints / Upload photo layers toggles, ⋯ menu items, title count.
+- ☐ Window behaviour: the X button with Hide to tray hides; Minimize to tray; Start minimized; `taskkill` (no `/F`) still exits.
+- ☐ Real photo in VRChat with VRCX running, the app watching the real camera roll: uploads after VRCX's chunk (check the wait time in the log; the downloaded asset has `Description`).
+- ☐ Real multi-layer photo: the combined photo uploads in about 1 s, and the layers follow the setting.
+- ☐ VRCX "modify filename" on: exactly one asset, under the `_wrld_…` name. (Turn the setting back off afterwards if wanted.)
+- ☐ Photo with VRCX closed: uploads after the 10 s timeout.
+- ☐ Watching the real camera roll: nothing under `Prints\`, `Stickers\` or `Emoji\` is queued (log).
+- ☐ VRCX App Launcher: a shortcut in `%AppData%\VRCX\startup\`. Start VRChat after VRCX → launched. Exit VRChat → killed, state intact, next start catches up.
+- ☐ Two VRChat clients: closing the first kills and relaunches PhotoSync. It starts cleanly, the session count continues, and a photo around the kill is uploaded.
+
+Already verified during planning (2026-11-21):
+- ✔ VRCX delay (~1 s) and multi-layer file order measured live (`tools/watch-vrcx.ps1`).
+- ✔ The strict-name pattern over the whole camera roll: 614 files, only `- Copy.png` rejected.
+- ✔ The `_` and `_wrld_<uuid>` VRCX rename forms observed.
+
+---
+
+## Reference: settings window layout
+```
+┌ Immich server ─────────────────────────────────────┐
+│ Server URL: [https://immich.example.com          ] │
+│ API key:    [••••••••••••••••••••••••••] [Show]    │
+│             How do I get an API key? (link)        │
+│ [Test connection]  ✔ Connected — Immich 3.4.2,     │
+│                      key can upload                │
+│ Album:      [VRChat              ] (optional)      │
+│ ☐ Also upload my 2,431 existing photos  (first     │
+│   setup only)                                      │
+│ ▸ Advanced (visibility, VRCX wait, exact names)    │
+│ Photo folder: D:\Photos\VRChat (from VRChat)       │
+│                               [Save]   [Cancel]    │
+└────────────────────────────────────────────────────┘
+```
 
 ## Possible later additions (out of scope for v1)
 - Choose an album per world, using the world name in VRCX's `Description` JSON chunk (already read for the settle check) or the VRChat log.

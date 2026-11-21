@@ -5,7 +5,8 @@ VRChat PhotoSync: a small .NET 10 WinForms app that watches the VRChat camera ro
 **This is a public repository.** The developer's real paths, server address and other personal details are in `CLAUDE.local.md` (git-ignored). Use them while working, but never copy them into committed files, commit messages or test data. Use example values instead (`D:\Photos\VRChat`, `https://immich.example.com`).
 
 ## Workflow
-- Work through `PLAN.md` one step at a time.
+- Work through `PLAN.md` one build item (`- [ ]`) at a time. Each item includes its own unit tests and is done when `dotnet build` and `dotnet test` pass.
+- Items under "Manual verification" use `- ☐` and are **not** for agents to tick. They need the user, VRChat, VRCX or GUI clicks. Don't convert them to checkboxes.
 - **After each step is complete, commit and push:**
   - Tick its checkbox(es) in `PLAN.md` in the same commit.
   - Use a short message that names the step.
