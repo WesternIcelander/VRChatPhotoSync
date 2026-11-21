@@ -1,6 +1,9 @@
 # Personal, machine-specific notes for Claude Code
 CLAUDE.local.md
 
+# Personal Claude Code permission settings
+.claude/settings.local.json
+
 # Immich server URL + API key for local integration tests
 secrets.local.json
 
