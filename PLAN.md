@@ -361,6 +361,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 - [ ] Window behaviour: a `WM_SYSCOMMAND`/`SC_CLOSE` with `HideToTray` hides the window, while a plain `WM_CLOSE` always exits.
 - [ ] `ImmichClient` against a fake `HttpMessageHandler`: check the multipart field names and date format, the headers (`x-api-key`, `x-immich-checksum`), and the 201/200/401/400/500 mapping.
 - [ ] `UploadState` round-trip and atomic save.
+- [ ] Integration tests (`[Trait("Category","Integration")]`) against a real server: ping, `api-keys/me`, upload of a **generated** PNG (then the same bytes again → `duplicate`), and album create/add. They read `serverUrl`/`apiKey` from the git-ignored `secrets.local.json` at the repo root, or from the `IMMICH_TEST_URL`/`IMMICH_TEST_API_KEY` environment variables, and are **skipped** when neither is set (so CI and other contributors don't need a server). Trash the test assets afterwards (`DELETE /api/assets`) if the key has `asset.delete`.
 - [ ] `PrintDetector`, using fixtures **generated in the test** (no real photos committed, because real prints include the user's name and world):
   - A made-up print: a white 2048×1440 canvas, random noise in the photo area, and black "text" pixels in the caption strip → print.
   - Noise over the whole canvas at 2048×1440 → not a print.

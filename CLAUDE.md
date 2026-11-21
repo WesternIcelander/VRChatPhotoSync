@@ -19,6 +19,7 @@ VRChat PhotoSync: a small .NET 10 WinForms app that watches the VRChat camera ro
   - Use it as a source of real files for manual checks: copy files from it into a scratch folder.
   - Never commit it, and never write automated tests that depend on it. Unit tests generate their own fixtures.
 - Never commit `config.json`, `state.json`, logs, or any API key. Never log the API key.
+- `secrets.local.json` (git-ignored) holds `{"serverUrl", "apiKey"}` for the dev Immich server. Integration tests and manual API checks read it from there. **Never print, echo or log its `apiKey`**, and never paste it into commands as a literal: read it from the file inside the command. If `apiKey` is empty, skip the integration tests and ask the user to fill it in.
 - Real photos and prints include usernames, world names, and player lists in VRCX metadata. Don't copy real photos into the repo.
 
 ## Environment
