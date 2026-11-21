@@ -380,11 +380,13 @@ How this list works:
     - No `--folder` (separate scratch copy, unreachable server, wrong key): log shows `Picture folder: <camera roll> (from VRChat config, split by month)`, the folder treated as new (`0 queued`), and VRChat's `config.json` hash and modified time unchanged.
     - `PrintDetector` over `sample-photos\`: 10/10 `*_2048x1440.png` are prints, 0 of the other 103 PNGs. Strict filter: all 113 files accepted (the sample has no hand-made copies or JPGs; the `_` and `_wrld_` renames pass).
     - Cleanup: all 11 test assets trashed (bulk check shows every uploaded checksum `isTrashed: true`; the 3 layers and the skipped print were never uploaded). The empty album `PhotoSync smoke test 2026-11-21` is left (the key has no `album.delete`).
-- [ ] **Publish** a single-file self-contained build:
+- [x] **Publish** a single-file self-contained build:
   - `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true` into `publish/`. No trimming, because WinForms doesn't support it.
   - Add `tools/publish.ps1`.
   - Check that the exe starts from a fresh empty folder (no config → it waits in the not-set-up state without crashing; check via the log) and exits cleanly with `taskkill`.
   - Record the size.
+  - **Results (2026-11-21):** `tools/publish.ps1` → `publish\VRChatPhotoSync.exe` **49.5 MB** (51,951,463 bytes), plus `VRChatPhotoSync.pdb` (not needed to run). Copied alone into an empty scratch folder and started with `--folder <empty scratch>`: the log shows `Server: (not set); API key not set.`, `No Immich client: the server URL or API key isn't set up.`, the watcher and an empty catch-up; the Immich server window opened and the process stayed up. `config.json`, `state.json` and `logs\` were created next to the exe. Plain `taskkill /PID` → `PhotoSync stopping (exit)`, exit code 0.
+    - The first run showed two `ObjectDisposedException`s on that `taskkill` (the server window's `CancellationTokenSource` was cancelled after the window had already been disposed, then disposed again by the caller's `using`). Fixed in `ServerSettingsForm` (cancel/dispose only once) with a test; the rerun logged no errors.
 - [ ] **README.md**:
   - what it does
   - Immich API key creation (`<server>/user-settings?isOpen=api-keys`, or profile → Account Settings → API Keys) and the required/optional permissions

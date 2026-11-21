@@ -274,16 +274,27 @@ public sealed class ServerSettingsForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        _closing.Cancel();
+        CancelPending();
         base.OnFormClosed(e);
+    }
+
+    // The form can be disposed before or while the dialog closes (e.g. taskkill sends WM_CLOSE to every window and
+    // the main form exits first), and then Dispose runs again from the caller's using: cancel and dispose only once.
+    private bool _closingDisposed;
+
+    private void CancelPending()
+    {
+        if (!_closingDisposed)
+            _closing.Cancel();
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !_closingDisposed)
         {
             _closing.Cancel();
             _closing.Dispose();
+            _closingDisposed = true;
             _toolTip.Dispose();
         }
         base.Dispose(disposing);

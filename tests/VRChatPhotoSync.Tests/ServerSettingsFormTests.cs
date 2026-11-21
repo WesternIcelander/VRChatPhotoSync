@@ -30,6 +30,22 @@ public class ServerSettingsFormTests
         root.Controls.Cast<Control>().SelectMany(c => new[] { c }.Concat(All(c)));
 
     [Fact]
+    public void ClosedAfterDispose_AndDisposedTwice_DoesNotThrow()
+    {
+        // taskkill sends WM_CLOSE to every window: the app can dispose the open dialog before the dialog's own close
+        // runs, and the caller's using disposes it again.
+        RunSta(() =>
+        {
+            var form = new ServerSettingsForm(new ServerSettingsModel(new AppConfig()), Folder, _ => { });
+            form.Show();
+            form.Dispose();
+            typeof(Form).GetMethod("OnFormClosed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(form, [new FormClosedEventArgs(CloseReason.TaskManagerClosing)]);
+            form.Dispose();
+        });
+    }
+
+    [Fact]
     public void FirstSetup_OffersExistingPhotos_KeyBoxIsEmptyPasswordBox()
     {
         RunSta(() =>
