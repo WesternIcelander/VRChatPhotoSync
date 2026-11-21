@@ -300,7 +300,7 @@ How this list works:
   - Backfill (Upload existing photos): all candidates minus prints/layers per the settings → SHA1 → bulk check → enqueue `accept`, and record `reject` as already present. Report progress (`n/N`).
   - `CountExistingAsync()` for the first-setup checkbox (applies the same rules).
   - Tests: files in the root and month folders, copied-in old-mtime files are found, excluded folders are skipped, a folder change doesn't trigger a mass upload, backfill uses the bulk check.
-- [ ] **Logging.**
+- [x] **Logging.**
   - Rolling `logs\photosync-YYYYMMDD.log` next to the config, kept 7 days.
   - Record start/stop (with the picture folder and its source), each queued file, skip reasons, settle wait time, upload result + asset id, retries and errors.
   - The API key is **never** logged. Add a test that runs a fake upload and greps the log for the key.
