@@ -270,7 +270,7 @@ How this list works:
   - Tests: every exit path, including a sibling at 150 ms and a chunk at 1 s.
 
 ### E. Upload pipeline
-- [ ] **Upload queue and worker**, with fake-client tests:
+- [x] **Upload queue and worker**, with fake-client tests:
   - `UploadQueue`: a `Channel<string>`, de-duplicated by path.
   - `UploadWorker` pipeline per file:
     1. Filter.
