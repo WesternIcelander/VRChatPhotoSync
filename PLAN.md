@@ -203,7 +203,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
   - Return `PictureFolder` (`picture_output_folder`, or `Path.Combine(GetFolderPath(SpecialFolder.MyPictures), "VRChat")` if it is missing, empty or the file is missing; inject the Pictures lookup so tests can fake it), passed through `Environment.ExpandEnvironmentVariables` + `Path.GetFullPath`.
   - Also return `SplitByDate` (default true) and `Source` (`"VRChat config"` / `"default"` / `"--folder"`) to show in the UI and log.
   - Never throw. Log and use the defaults instead.
-- [ ] Parse command-line options `--folder <path>` (overrides the VRChat folder for this run only), `--server <url>`, `--minimized`, `--settings` (force the dialog). Command-line values override the file for that run only.
+- [x] Parse command-line options `--folder <path>` (overrides the VRChat folder for this run only), `--server <url>`, `--minimized`, `--settings` (force the dialog). Command-line values override the file for that run only.
 - [ ] Ship `config.example.json` with placeholder values (no real paths, URLs or keys).
 
 ### 3. Immich API client
