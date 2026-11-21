@@ -245,7 +245,7 @@ How this list works:
   - `PrintLayout` constants: photo (64,69)–(1983,1148), caption (0,1159)–(2047,1435), inclusive.
   - `PrintDetector.IsPrint(path)`: only 2048×1440 (checked via the name or IHDR first). Otherwise `Bitmap` + `LockBits`, and border pixels with min channel ≥ 240 must make up ≥ 99.9%, with early exit.
   - Tests: a made-up print → true; full-canvas noise → false; tinted border (230) → false; a 1920×1080 image → false without decoding; a few stray border pixels → true.
-- [ ] **Upload state**, with tests:
+- [x] **Upload state**, with tests:
   - `UploadState` / `state.json` next to the config. Contents:
     - `pictureFolder`
     - `lastScanUtc`
