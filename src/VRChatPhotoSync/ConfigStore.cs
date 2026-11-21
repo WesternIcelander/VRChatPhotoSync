@@ -58,7 +58,8 @@ public sealed class ConfigStore
     /// <summary>
     /// Loads the config. A missing file gives the defaults. When the fallback is in use and
     /// it has no file yet, a read-only <c>config.json</c> next to the exe is used as the
-    /// starting point. Never throws: an unreadable or invalid file gives the defaults and
+    /// starting point. A valid server URL is normalised (see <see cref="NormalizeServerUrl"/>).
+    /// Never throws: an unreadable or invalid file gives the defaults and
     /// the reason in <see cref="ConfigLoadResult.Error"/>.
     /// </summary>
     public ConfigLoadResult Load()
@@ -80,6 +81,7 @@ public sealed class ConfigStore
             var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
             if (config is null)
                 return new ConfigLoadResult(new AppConfig(), path, Exists: true, Error: "The config file is empty.");
+            config = config with { ServerUrl = NormalizeServerUrl(config.ServerUrl) };
             return new ConfigLoadResult(config, path, Exists: true, Error: null);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
@@ -89,7 +91,8 @@ public sealed class ConfigStore
     }
 
     /// <summary>
-    /// Writes the config atomically (temp file, then replace). Throws
+    /// Writes the config atomically (temp file, then replace). The server URL is stored in
+    /// its normalised form (see <see cref="NormalizeServerUrl"/>). Throws
     /// <see cref="ArgumentException"/> if a server URL is set but isn't an absolute
     /// http/https URL.
     /// </summary>
@@ -99,11 +102,32 @@ public sealed class ConfigStore
         if (!string.IsNullOrWhiteSpace(config.ServerUrl) && !IsValidServerUrl(config.ServerUrl))
             throw new ArgumentException($"Server URL must be an absolute http or https URL: {config.ServerUrl}", nameof(config));
 
+        config = config with { ServerUrl = NormalizeServerUrl(config.ServerUrl) };
+
         System.IO.Directory.CreateDirectory(Directory);
         var json = JsonSerializer.Serialize(config, JsonOptions);
         var tempPath = ConfigPath + ".tmp";
         File.WriteAllText(tempPath, json);
         File.Move(tempPath, ConfigPath, overwrite: true);
+    }
+
+    /// <summary>
+    /// Returns the Immich API base URL for <paramref name="url"/>: whitespace and any
+    /// trailing <c>/</c> trimmed, and <c>/api</c> added if it isn't already the last path
+    /// segment. So <c>https://immich.example.com/</c> becomes
+    /// <c>https://immich.example.com/api</c>, and <c>https://immich.example.com/api/</c>
+    /// becomes <c>https://immich.example.com/api</c>. A null, empty or invalid URL (see
+    /// <see cref="IsValidServerUrl"/>) is returned unchanged so the caller can report it.
+    /// </summary>
+    public static string? NormalizeServerUrl(string? url)
+    {
+        if (!IsValidServerUrl(url))
+            return url;
+
+        var trimmed = url!.Trim().TrimEnd('/');
+        if (trimmed.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            return trimmed[..^4] + "/api";
+        return trimmed + "/api";
     }
 
     /// <summary>True if <paramref name="url"/> is an absolute <c>http</c> or <c>https</c> URL with a host.</summary>

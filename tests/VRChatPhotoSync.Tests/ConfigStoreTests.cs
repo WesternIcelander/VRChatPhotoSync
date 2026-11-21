@@ -194,4 +194,53 @@ public sealed class ConfigStoreTests : IDisposable
         Assert.Equal("immich.example.com", result.Config.ServerUrl);
         Assert.False(result.HasValidServerUrl);
     }
+
+    [Theory]
+    [InlineData("https://immich.example.com", "https://immich.example.com/api")]
+    [InlineData("https://immich.example.com/", "https://immich.example.com/api")]
+    [InlineData("https://immich.example.com/api", "https://immich.example.com/api")]
+    [InlineData("https://immich.example.com/api/", "https://immich.example.com/api")]
+    [InlineData("https://immich.example.com//", "https://immich.example.com/api")]
+    [InlineData("https://immich.example.com/API", "https://immich.example.com/api")]
+    [InlineData("  https://immich.example.com/  ", "https://immich.example.com/api")]
+    [InlineData("http://192.168.1.10:2283", "http://192.168.1.10:2283/api")]
+    [InlineData("https://example.com/immich/", "https://example.com/immich/api")]
+    [InlineData("https://example.com/immich/api", "https://example.com/immich/api")]
+    [InlineData("https://example.com/myapi", "https://example.com/myapi/api")]
+    public void NormalizeServerUrl_EndsInApi(string url, string expected)
+    {
+        Assert.Equal(expected, ConfigStore.NormalizeServerUrl(url));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("immich.example.com")]
+    [InlineData("ftp://immich.example.com/")]
+    public void NormalizeServerUrl_EmptyOrInvalid_IsUnchanged(string? url)
+    {
+        Assert.Equal(url, ConfigStore.NormalizeServerUrl(url));
+    }
+
+    [Theory]
+    [InlineData("https://immich.example.com/")]
+    [InlineData("https://immich.example.com/api/")]
+    [InlineData("https://immich.example.com")]
+    public void Save_StoresNormalisedServerUrl(string url)
+    {
+        var store = new ConfigStore(_exeDir, _appDataDir);
+        store.Save(new AppConfig { ServerUrl = url });
+        Assert.Contains("\"ServerUrl\": \"https://immich.example.com/api\"", File.ReadAllText(store.ConfigPath));
+        Assert.Equal("https://immich.example.com/api", store.Load().Config.ServerUrl);
+    }
+
+    [Fact]
+    public void Load_HandEditedServerUrl_IsNormalised()
+    {
+        File.WriteAllText(Path.Combine(_exeDir, "config.json"), "{\"ServerUrl\":\"https://immich.example.com/\"}");
+        var result = new ConfigStore(_exeDir, _appDataDir).Load();
+        Assert.Null(result.Error);
+        Assert.Equal("https://immich.example.com/api", result.Config.ServerUrl);
+    }
 }
