@@ -352,7 +352,7 @@ How this list works:
     7. `Application.Run`.
   - Graceful close (user exit or Windows shutdown only; VRCX kills): stop intake, give the current upload up to about 10 s, save state.
   - Tests: an abandoned mutex (a child process acquires the mutex and is killed, then the next acquire succeeds), and session continuation after a simulated kill.
-- [ ] **Agent-run end-to-end smoke test** (no VRChat or GUI clicks needed). Use the real server from `secrets.local.json`. Write the test `config.json` with the key DPAPI-protected by code, never echoed.
+- [x] **Agent-run end-to-end smoke test** (no VRChat or GUI clicks needed). Use the real server from `secrets.local.json`. Write the test `config.json` with the key DPAPI-protected by code, never echoed.
   - Run the built exe with `--folder <scratch> --minimized`, copying files from `sample-photos\` (see CLAUDE.md). Check results via the log and the Immich API:
     - one photo uploads with the right date and name; a renamed copy → duplicate
     - a slow write is waited for
@@ -366,6 +366,20 @@ How this list works:
     - `--folder` absent → the log shows the folder from VRChat's config (read only)
   - Also run `PrintDetector` over every `*_2048x1440.png` in `sample-photos\` (all prints) and a sample of normal photos (none). Run the strict filter over `sample-photos\` and expect only known rejects.
   - Trash all test assets afterwards. Record the results in the item's notes.
+  - **Results (2026-11-21, Release build, Immich 3.4.2, dev key with `asset.upload`, `asset.copy`, `asset.delete`, `album.read`, `album.create`, `albumAsset.create`):**
+    - Setup: the exe copied to a scratch folder (config, state and logs next to it); `config.json` written by a scratch helper with `SecretProtector.Protect` (key never printed; afterwards neither the key nor the wrong key appears in the log, state or config). Every test file was a copy from `sample-photos\` with an extra `tEXt` chunk holding a random id, so each checksum was new to the server and no existing asset was touched. Most runs went through a local logging reverse proxy (`--server http://localhost:<port>`) to see the multipart fields, because the key has no `asset.read`.
+    - One photo (month folder): uploaded with `fileCreatedAt` = the name's timestamp, `filename` = the file name, `x-immich-checksum` = the file's SHA1. The album's `startDate` moved to the 2026-09 name date, so the server took the date from the field, not the file time. A copy under another name → `Duplicate` with the first asset's id.
+    - Slow write (10 parts over 8 s): uploaded once, after the last write, with the full file's SHA1. Side note: each `Changed` event re-queued the path while it was in readiness (11 `Queued` lines, then 10 `Skipped (unchanged)`); harmless, only log noise.
+    - Root and month folders: photos in the root, `2026-11\` and a `2026-10\` folder created while the app was down were all picked up.
+    - Print (2048×1440): `Skipped (print)`; with `ExcludePrints` false (restart) a new print uploaded.
+    - Multi-layer set (combined, then `_Environment`/`_Player`/`_UI` about 170 ms apart): combined settled with `SiblingExists after 0.0 s` and uploaded about 1.1 s after it was written; 3 × `Skipped (layer)`.
+    - Album: created on the first upload and every upload/duplicate added to it.
+    - `taskkill /F` while the proxy held an upload body (the upload never reached the server), then 2 more files copied in (root + a new month folder), then restart within 2 min: `Continuing the session … (5 uploaded so far)`, the catch-up queued all 3, all uploaded, the session count went on to 8.
+    - Wrong URL (proxy down, connection refused): `retry 1 in 5 s`, `retry 2 in 15 s`, then the proxy came up and the next try uploaded. Wrong key: HTTP 401 → `Key rejected — uploads paused`; after restarting with the right key the catch-up uploaded the paused file.
+    - Late `Description` (`PngTestFiles.InsertDescriptionChunk` after a `TimedOut after 10.0 s` upload): re-uploaded as a new asset, `PUT assets/copy` + `DELETE assets`, log `Replaced asset … (the old one is in the trash)`; bulk check: old checksum `isTrashed: true`, new one live, album count unchanged.
+    - No `--folder` (separate scratch copy, unreachable server, wrong key): log shows `Picture folder: <camera roll> (from VRChat config, split by month)`, the folder treated as new (`0 queued`), and VRChat's `config.json` hash and modified time unchanged.
+    - `PrintDetector` over `sample-photos\`: 10/10 `*_2048x1440.png` are prints, 0 of the other 103 PNGs. Strict filter: all 113 files accepted (the sample has no hand-made copies or JPGs; the `_` and `_wrld_` renames pass).
+    - Cleanup: all 11 test assets trashed (bulk check shows every uploaded checksum `isTrashed: true`; the 3 layers and the skipped print were never uploaded). The empty album `PhotoSync smoke test 2026-11-21` is left (the key has no `album.delete`).
 - [ ] **Publish** a single-file self-contained build:
   - `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true` into `publish/`. No trimming, because WinForms doesn't support it.
   - Add `tools/publish.ps1`.
