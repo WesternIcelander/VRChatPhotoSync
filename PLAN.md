@@ -400,7 +400,10 @@ How this list works:
   - building from source
 
   Use example values only (public repo).
-- [ ] **Release workflow** (GitHub Actions): on a `v*` tag, build, test (integration tests skip without secrets) and publish, then attach the exe to a GitHub release. Validate the YAML locally (`dotnet` steps run the same as `tools/publish.ps1`). Don't create a tag.
+- [x] **Release workflow** (GitHub Actions): on a `v*` tag, build, test (integration tests skip without secrets) and publish, then attach the exe to a GitHub release. Validate the YAML locally (`dotnet` steps run the same as `tools/publish.ps1`). Don't create a tag.
+  - **Results (2026-11-21):** `.github/workflows/release.yml` on `windows-latest` with `pwsh`: checkout, .NET 10.0.x, a check that the tag is `v` + the csproj `<Version>` (fails otherwise; a `-suffix` version becomes a pre-release), `dotnet build`/`dotnet test` in Release, `tools/publish.ps1` itself, then `gh release create <tag> publish/VRChatPhotoSync.exe --generate-notes --verify-tag` with `contents: write`. The integration tests get `IMMICH_TEST_URL`/`IMMICH_TEST_API_KEY` from repository secrets when set and skip otherwise.
+    - The version comes from the csproj, not the tag: overriding it with `-p:Version=<tag>` broke `AppVersion_MatchesAssemblyVersionWithoutBuildMetadata` for any other version.
+    - Local check (no YAML linter available offline): the step `run` blocks were extracted from the file and run in order in a fresh clone without `secrets.local.json`. A wrong tag (`v9.9.9`) stopped at the version check; `v0.1.0` → build OK, 716 passed / 4 integration skipped, publish 49.5 MB exe (product version `0.1.0+<commit>`). The checkout, setup-dotnet and `gh release` steps only run on GitHub; they get checked on the first real tag.
 
 ---
 

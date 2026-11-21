@@ -160,6 +160,10 @@ Build the single-file, self-contained exe (about 50 MB) into `publish\`:
 powershell -File tools\publish.ps1
 ```
 
+### Releases
+
+Pushing a tag `v<version>` runs `.github/workflows/release.yml` on GitHub Actions. It builds, runs the tests, publishes the exe the same way as `tools/publish.ps1`, and attaches `VRChatPhotoSync.exe` to a GitHub release for the tag. The tag must match `<Version>` in `src/VRChatPhotoSync/VRChatPhotoSync.csproj` (for example `v0.1.0`), so bump that first. A version with a suffix (`0.2.0-beta.1`) becomes a pre-release. The integration tests run only if the repository secrets `IMMICH_TEST_URL` and `IMMICH_TEST_API_KEY` are set.
+
 ### Integration tests
 
 The tests tagged `Category=Integration` talk to a real Immich server. They are skipped unless a server is configured, either with the environment variables `IMMICH_TEST_URL` and `IMMICH_TEST_API_KEY`, or with a git-ignored `secrets.local.json` at the repository root:
@@ -178,6 +182,6 @@ dotnet test --filter "Category!=Integration"
 
 - `src/VRChatPhotoSync/`: the app (WinForms, `net10.0-windows`, no NuGet dependencies).
 - `tests/VRChatPhotoSync.Tests/`: xUnit tests. They generate their own test images.
-- `tools/publish.ps1`: release build. `tools/watch-vrcx.ps1`: measures when VRCX adds its metadata to new photos.
+- `tools/publish.ps1`: release build. `.github/workflows/release.yml`: builds and releases the exe on a `v*` tag. `tools/watch-vrcx.ps1`: measures when VRCX adds its metadata to new photos.
 - `docs/print_mask.png`: the print layout used to detect prints.
 - `PLAN.md`: the design notes and research behind the app.
