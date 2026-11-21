@@ -55,7 +55,7 @@ static class Program
 
         try
         {
-            Application.Run(new Form1(new StartupContext(options, store, loaded, savedConfig, runConfig, vrchat, logger)));
+            Application.Run(new MainForm(new StartupContext(options, store, loaded, savedConfig, runConfig, vrchat, logger)));
         }
         finally
         {

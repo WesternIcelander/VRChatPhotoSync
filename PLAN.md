@@ -307,7 +307,7 @@ How this list works:
   - Wire the logger through the existing components.
 
 ### F. User interface
-- [ ] **Main window**:
+- [x] **Main window**:
   - Small fixed `MainForm` (about 360×160). It shows:
     - the status line (watching / waiting for folder / waiting for VRCX (N) / uploading / retrying in Ns / key rejected / not set up)
     - "Uploaded this session: N" (plus duplicates and failures if any)
