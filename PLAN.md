@@ -341,7 +341,7 @@ How this list works:
   - Test: send `SC_CLOSE` and `WM_CLOSE` to a form with `HideToTray` (STA test) → hides vs exits.
 
 ### G. App lifecycle and packaging
-- [ ] **App lifecycle wiring**, with tests:
+- [x] **App lifecycle wiring**, with tests:
   - `Program.Main` order:
     1. Single-instance mutex. `AbandonedMutexException` = acquired; wait up to about 5 s; otherwise signal the running copy to show its window, then exit.
     2. Global exception handlers (log + status line).

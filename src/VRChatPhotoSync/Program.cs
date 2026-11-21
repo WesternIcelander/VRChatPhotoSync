@@ -4,8 +4,13 @@ namespace VRChatPhotoSync;
 
 static class Program
 {
+    /// <summary>How long an error stays in the status line before the normal status comes back.</summary>
+    private static readonly TimeSpan ErrorNoticeTime = TimeSpan.FromSeconds(60);
+
     /// <summary>
-    ///  The main entry point for the application.
+    ///  The main entry point for the application. The order matters (see PLAN.md, "App lifecycle wiring"):
+    ///  single instance, exception handlers, config/VRChat settings/state, the server window if not set up, the
+    ///  pipeline and heartbeat, then the message loop; a normal exit stops gracefully.
     /// </summary>
     [STAThread]
     static void Main(string[] args)
@@ -14,10 +19,47 @@ static class Program
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
 
-        var options = CommandLineOptions.Parse(args);
+        // 1. Single instance. A killed copy leaves the mutex abandoned, which counts as acquired; a copy that is
+        //    still exiting (VRCX kill-then-relaunch) gets a few seconds. Otherwise show the running copy and exit.
+        using var instance = SingleInstance.TryAcquire(SingleInstance.DefaultName, SingleInstance.DefaultWait);
+        if (instance is null)
+        {
+            SingleInstance.SignalRunning(SingleInstance.DefaultName);
+            return;
+        }
 
+        var options = CommandLineOptions.Parse(args);
         var store = new ConfigStore();
         using var logger = new FileLogger(FileLogger.ForConfigDirectory(store.Directory));
+        if (instance.WasAbandoned)
+            logger.Info("The previous copy was killed (abandoned single-instance mutex).");
+
+        // 2. Global exception handlers: log, and show the error in the status line for a while.
+        MainForm? form = null;
+        System.Threading.Timer? noticeTimer = null;
+        var stopReason = "exit";
+        void ReportError(string message, Exception? ex)
+        {
+            logger.Error(message, ex);
+            var viewModel = form?.ViewModel;
+            if (viewModel is null)
+                return;
+            viewModel.SetNotice($"Error: {ex?.Message ?? message} (see the log)");
+            noticeTimer?.Dispose();
+            noticeTimer = new System.Threading.Timer(_ => viewModel.SetNotice(null), null, ErrorNoticeTime, Timeout.InfiniteTimeSpan);
+        }
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => ReportError("Unhandled UI exception.", e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            stopReason = "crash";
+            logger.Error("Unhandled exception.", e.ExceptionObject as Exception);
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            e.SetObserved();
+            ReportError("Unobserved background task exception.", e.Exception.GetBaseException());
+        };
 
         if (options.Errors.Count > 0)
         {
@@ -30,6 +72,7 @@ static class Program
                 MessageBoxIcon.Warning);
         }
 
+        // 3. Config, VRChat settings and state (the session is resolved when the state loads).
         var loaded = store.Load();
         if (loaded.Error is not null)
             logger.Warn($"Config: {loaded.Error} Using the defaults.");
@@ -45,21 +88,92 @@ static class Program
         logger.Info($"Server: {(string.IsNullOrWhiteSpace(runConfig.ServerUrl) ? "(not set)" : runConfig.ServerUrl)}" +
                     $"; API key {(string.IsNullOrWhiteSpace(runConfig.ApiKeyProtected) ? "not set" : "set")}.");
 
-        var stopReason = "exit";
-        Application.ThreadException += (_, e) => logger.Error("Unhandled UI exception.", e.Exception);
-        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        using var clientHost = new ImmichClientHost();
+        var startup = new StartupContext(options, store, loaded, savedConfig, runConfig, vrchat, logger);
+        form = new MainForm(startup);
+        var mainForm = form;
+        using var runtime = new AppRuntime(
+            new UploadStateStore(store.Directory),
+            vrchat.PictureFolder,
+            () => mainForm.Config.Current,
+            () => clientHost.Current,
+            log: logger.Info,
+            warn: logger.Warn);
+        runtime.Worker.AttachLog(logger);
+        runtime.Scanner.AttachLog(logger);
+        lock (runtime.Worker.StateLock)
+            mainForm.ViewModel.LoadSession(runtime.State.Session);
+
+        mainForm.Attach(clientHost);
+        mainForm.Attach(runtime.Queue);
+        mainForm.Attach(runtime.Worker);
+        mainForm.Attach(runtime.Scanner);
+        runtime.WatcherChanged += mainForm.Attach;
+        instance.ListenForShow(() => InvokeOnForm(mainForm, mainForm.RestoreWindow));
+
+        // 4. The Immich server window, if not set up (or --settings). It opens as soon as the main window's handle
+        //    exists (also when starting in the tray), so it can count existing photos and its Save can restart the
+        //    client and resume the worker. Until then the worker waits in "not set up" and new photos queue up.
+        if (startup.ShouldOpenSettings)
         {
-            stopReason = "crash";
-            logger.Error("Unhandled exception.", e.ExceptionObject as Exception);
-        };
+            var opened = false;
+            mainForm.HandleCreated += (_, _) =>
+            {
+                if (opened)
+                    return;
+                opened = true;
+                mainForm.BeginInvoke(mainForm.ShowServerSettings);
+            };
+        }
+
+        // 5. The client, the watchers, the startup catch-up and the worker; 6. the heartbeat (started by Start).
+        if (!clientHost.Restart(runConfig))
+            logger.Warn("No Immich client: the server URL or API key isn't set up.");
+        VRChatConfigWatcher? configWatcher = null;
+        if (options.Folder is null && vrchat.ConfigPath is not null)
+            configWatcher = new VRChatConfigWatcher(vrchat.ConfigPath, vrchat, () => VRChatSettings.Load(log: logger.Warn), log: logger.Info);
+        runtime.Start(configWatcher);
+        if (runtime.Watcher is { } watcher)
+            mainForm.Attach(watcher);
 
         try
         {
-            Application.Run(new MainForm(new StartupContext(options, store, loaded, savedConfig, runConfig, vrchat, logger)));
+            // 7. The message loop.
+            Application.Run(mainForm);
+        }
+        catch (Exception ex)
+        {
+            stopReason = "crash";
+            logger.Error("The message loop failed.", ex);
         }
         finally
         {
+            // A normal exit (the user, or Windows shutting down): stop intake, give the current upload up to
+            // about 10 s, save the state. A VRCX kill never gets here, and nothing depends on it.
+            try
+            {
+                Task.Run(() => runtime.StopAsync()).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                logger.Error("Stopping failed.", ex);
+            }
+            noticeTimer?.Dispose();
             logger.LogStop(stopReason, vrchat);
+        }
+    }
+
+    /// <summary>Runs <paramref name="action"/> on the form's UI thread, if the form is still open.</summary>
+    private static void InvokeOnForm(Form form, Action action)
+    {
+        try
+        {
+            if (form.IsHandleCreated && !form.IsDisposed)
+                form.BeginInvoke(action);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            // The window is closing.
         }
     }
 
