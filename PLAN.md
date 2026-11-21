@@ -256,7 +256,7 @@ How this list works:
   - Tests: round-trip, atomic save, corrupt file, session continue (30 s) vs new (10 min), and a folder change → treated as a first run.
 
 ### D. Watching and settling
-- [ ] **Folder watcher**, with tests where feasible (temp folders):
+- [x] **Folder watcher**, with tests where feasible (temp folders):
   - `FolderWatcher` on the root: `IncludeSubdirectories`, `NotifyFilter = FileName | LastWrite | Size`, 64 KB buffer.
   - Raises debounced `FileAppeared(path)` (from Created/Changed) and `FileRenamed(old, new)`.
   - On `Error`: recreate the watcher and raise `ResyncNeeded`.
