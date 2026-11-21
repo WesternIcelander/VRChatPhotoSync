@@ -25,6 +25,9 @@ public interface IUploadClient
 
     /// <summary>Moves assets to the trash (never forced).</summary>
     Task<ApiResult> TrashAssetsAsync(IReadOnlyCollection<string> assetIds, CancellationToken cancellationToken = default);
+
+    /// <summary>Asks which files the server already has, by SHA-1 (<c>POST assets/bulk-upload-check</c>), for the backfill.</summary>
+    Task<ApiResult<IReadOnlyList<BulkCheckResult>>> BulkUploadCheckAsync(IReadOnlyList<BulkCheckItem> items, CancellationToken cancellationToken = default);
 }
 
 public sealed partial class ImmichClient : IUploadClient

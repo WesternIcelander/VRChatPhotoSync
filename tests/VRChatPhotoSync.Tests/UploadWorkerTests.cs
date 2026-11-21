@@ -110,6 +110,27 @@ public sealed class FakeUploadClient : IUploadClient
         }
         return Task.FromResult(TrashResult);
     }
+
+    /// <summary>Checksums (lower-case hex) the server already has, mapped to their asset ids.</summary>
+    public Dictionary<string, string> Existing { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>When set, the bulk check fails with this status.</summary>
+    public ApiStatus? BulkCheckFailure { get; set; }
+
+    public List<BulkCheckItem[]> BulkChecks { get; } = [];
+
+    public Task<ApiResult<IReadOnlyList<BulkCheckResult>>> BulkUploadCheckAsync(IReadOnlyList<BulkCheckItem> items, CancellationToken cancellationToken = default)
+    {
+        lock (_lock) BulkChecks.Add(items.ToArray());
+        if (BulkCheckFailure is { } failure)
+            return Task.FromResult(ApiResult<IReadOnlyList<BulkCheckResult>>.Fail(failure, 503, "unavailable"));
+        IReadOnlyList<BulkCheckResult> results = items
+            .Select(i => Existing.TryGetValue(i.Sha1, out var id)
+                ? new BulkCheckResult(i.Id, false, "duplicate", id, false)
+                : new BulkCheckResult(i.Id, true, null, null, false))
+            .ToList();
+        return Task.FromResult(ApiResult<IReadOnlyList<BulkCheckResult>>.Ok(results));
+    }
 }
 
 public sealed partial class UploadWorkerTests

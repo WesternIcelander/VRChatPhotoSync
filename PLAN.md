@@ -293,7 +293,7 @@ How this list works:
   - A file in state that changed (size/mtime differ) → re-upload. If the result is `created` with a new id: when `api-keys/me` grants `asset.copy` and `asset.delete` (or `all`), copy old → new, then trash old; otherwise log "kept both versions". Update state.
   - It doesn't count as a new upload; show `Updated <file> (VRCX metadata)` instead.
   - Tests: rename during settle (the `_wrld_` and bare `_` forms), rename after upload, re-upload with and without permissions, a `duplicate` result → no copy or trash.
-- [ ] **Catch-up scan and backfill**, with temp-folder tests:
+- [x] **Catch-up scan and backfill**, with temp-folder tests:
   - Startup catch-up: walk the candidates (root + months). Enqueue files where `max(CreationTimeUtc, LastWriteTimeUtc) > lastScanUtc − 1 min` that aren't in state, oldest first. Then set `lastScanUtc` = start.
   - First run, or a picture folder different from the one in state → `lastScanUtc` = now (no mass upload).
   - `ResyncNeeded` and `PictureFolderChanged` trigger a catch-up.
