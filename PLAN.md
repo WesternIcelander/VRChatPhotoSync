@@ -197,7 +197,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 - [x] `ConfigStore`: load and save JSON (exe dir, then `%APPDATA%` fallback). Validate that the URL is absolute http/https.
 - [x] Normalise `ServerUrl`: trim any trailing `/`, and add `/api` if it is missing, so that `https://immich.example.com/` becomes `https://immich.example.com/api`.
 - [x] `SecretProtector`: DPAPI encrypt/decrypt of the API key (base64 in JSON).
-- [ ] `VRChatSettings.Load()`:
+- [x] `VRChatSettings.Load()`:
   - Find `LocalLow\VRChat\VRChat\config.json` (Known Folder API, then the `%LOCALAPPDATA%\..\LocalLow` fallback).
   - Read it read-only and parse it leniently.
   - Return `PictureFolder` (`picture_output_folder`, or `Path.Combine(GetFolderPath(SpecialFolder.MyPictures), "VRChat")` if it is missing, empty or the file is missing; inject the Pictures lookup so tests can fake it), passed through `Environment.ExpandEnvironmentVariables` + `Path.GetFullPath`.
