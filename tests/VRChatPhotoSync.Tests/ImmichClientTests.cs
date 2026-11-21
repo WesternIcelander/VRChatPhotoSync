@@ -96,4 +96,78 @@ public class ImmichClientTests
         new ImmichClient("https://immich.example.com", "key", handler).Dispose();
         Assert.True(handler.Disposed);
     }
+
+    private sealed class FuncHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        public HttpRequestMessage? Request { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Request = request;
+            return send(request, cancellationToken);
+        }
+    }
+
+    private static FuncHandler Respond(HttpStatusCode status, string body) =>
+        new((_, _) => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) }));
+
+    [Fact]
+    public async Task Ping_Pong_ReturnsTrue_AndSendsGetServerPing()
+    {
+        var handler = Respond(HttpStatusCode.OK, "{\"res\":\"pong\"}");
+        using var client = new ImmichClient("https://immich.example.com", "key", handler);
+
+        Assert.True(await client.PingAsync());
+        Assert.Equal(HttpMethod.Get, handler.Request!.Method);
+        Assert.Equal("https://immich.example.com/api/server/ping", handler.Request.RequestUri!.ToString());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, "{}")]
+    [InlineData(HttpStatusCode.OK, "{\"res\":\"nope\"}")]
+    [InlineData(HttpStatusCode.OK, "{\"res\":1}")]
+    [InlineData(HttpStatusCode.OK, "[]")]
+    [InlineData(HttpStatusCode.OK, "<html>not json</html>")]
+    [InlineData(HttpStatusCode.OK, "")]
+    [InlineData(HttpStatusCode.NotFound, "{\"res\":\"pong\"}")]
+    [InlineData(HttpStatusCode.InternalServerError, "oops")]
+    [InlineData(HttpStatusCode.BadGateway, "")]
+    public async Task Ping_UnexpectedResponse_ReturnsFalse(HttpStatusCode status, string body)
+    {
+        using var client = new ImmichClient("https://immich.example.com", "key", Respond(status, body));
+        Assert.False(await client.PingAsync());
+    }
+
+    [Fact]
+    public async Task Ping_NetworkError_ReturnsFalse()
+    {
+        var handler = new FuncHandler((_, _) => throw new HttpRequestException("connection refused"));
+        using var client = new ImmichClient("https://immich.example.com", "key", handler);
+        Assert.False(await client.PingAsync());
+    }
+
+    [Fact]
+    public async Task Ping_Timeout_ReturnsFalse()
+    {
+        var handler = new FuncHandler(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("unreachable");
+        });
+        using var client = new ImmichClient("https://immich.example.com", "key", handler);
+        Assert.False(await client.PingAsync(TimeSpan.FromMilliseconds(50)));
+    }
+
+    [Fact]
+    public async Task Ping_CallerCancellation_Throws()
+    {
+        var handler = new FuncHandler(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("unreachable");
+        });
+        using var client = new ImmichClient("https://immich.example.com", "key", handler);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.PingAsync(TimeSpan.FromMinutes(1), cts.Token));
+    }
 }

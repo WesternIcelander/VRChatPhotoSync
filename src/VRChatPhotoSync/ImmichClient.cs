@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Text.Json;
 
 namespace VRChatPhotoSync;
 
@@ -68,6 +69,48 @@ public sealed class ImmichClient : IDisposable
             return plus >= 0 ? info[..plus] : info;
         }
         return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
+
+    /// <summary>Default time limit for <see cref="PingAsync"/>; much shorter than the upload timeout.</summary>
+    public static readonly TimeSpan DefaultPingTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Checks that the server is reachable: <c>GET server/ping</c>, which needs no permission
+    /// and answers <c>{"res":"pong"}</c>. Returns true only for a success status with that body.
+    /// Network errors, timeouts (<paramref name="timeout"/>, default
+    /// <see cref="DefaultPingTimeout"/>), non-success statuses and unexpected bodies return false.
+    /// Throws <see cref="OperationCanceledException"/> only when <paramref name="cancellationToken"/>
+    /// itself is cancelled.
+    /// </summary>
+    public async Task<bool> PingAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout ?? DefaultPingTimeout);
+        try
+        {
+            using var response = await _http.GetAsync("server/ping", cts.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return false;
+
+            var body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("res", out var res)
+                && res.ValueKind == JsonValueKind.String
+                && res.GetString() == "pong";
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false; // our own timeout (or HttpClient's)
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     public void Dispose() => _http.Dispose();
