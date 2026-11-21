@@ -193,7 +193,7 @@ Checked against the Immich OpenAPI spec (`open-api/immich-openapi-specs.json`, v
 - [x] Make the first git commit of the skeleton.
 
 ### 2. Configuration
-- [ ] `AppConfig` record (no photo-folder field; that comes from VRChat): `ServerUrl`, `ApiKeyProtected`, `AlbumName?` (empty = no album), `Visibility` (default `timeline`), `ExcludePrints` (default true), `UploadLayers` (default false), `StrictFileNames` (default true), `VrcxWaitSeconds` (default 10, 0 = off), `CloseButtonAction` (`Exit` | `HideToTray`, default `Exit`), `MinimizeButtonAction` (`Taskbar` | `Tray`, default `Taskbar`), `StartMinimized` (default false). There is no file-type setting, because the upload rule is fixed (`VRChat_*.png`).
+- [x] `AppConfig` record (no photo-folder field; that comes from VRChat): `ServerUrl`, `ApiKeyProtected`, `AlbumName?` (empty = no album), `Visibility` (default `timeline`), `ExcludePrints` (default true), `UploadLayers` (default false), `StrictFileNames` (default true), `VrcxWaitSeconds` (default 10, 0 = off), `CloseButtonAction` (`Exit` | `HideToTray`, default `Exit`), `MinimizeButtonAction` (`Taskbar` | `Tray`, default `Taskbar`), `StartMinimized` (default false). There is no file-type setting, because the upload rule is fixed (`VRChat_*.png`).
 - [ ] `ConfigStore`: load and save JSON (exe dir, then `%APPDATA%` fallback). Validate that the URL is absolute http/https.
 - [ ] Normalise `ServerUrl`: trim any trailing `/`, and add `/api` if it is missing, so that `https://immich.example.com/` becomes `https://immich.example.com/api`.
 - [ ] `SecretProtector`: DPAPI encrypt/decrypt of the API key (base64 in JSON).
