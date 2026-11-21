@@ -227,7 +227,7 @@ How this list works:
   - Trash every test asset at the end (if `asset.delete`). Leave the test album, and log its name.
 
 ### C. File handling (pure logic, no watcher yet)
-- [ ] **File names and filter**, with tests:
+- [x] **File names and filter**, with tests:
   - `VrcFileName`: `TryParseTimestamp` (local time from the name; falls back to the file times), `TryParseSize` (`_<W>x<H>`), `IsLayer` (`_Environment`/`_Player`/`_UI`, ignoring case), and `BaseName` (the name without the layer suffix, for finding siblings).
   - `PhotoFilter.Accepts(root, path, strictNames)`:
     - The name must be `VRChat_*.png` (ignoring case).
