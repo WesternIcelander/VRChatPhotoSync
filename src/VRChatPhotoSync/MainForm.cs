@@ -645,14 +645,14 @@ public sealed class MainForm : Form
         _statusLabel.AutoEllipsis = true;
         _statusLabel.Font = new Font(Font, FontStyle.Bold);
 
-        _countersLabel.SetBounds(left, 28, width, 18);
+        _countersLabel.SetBounds(left, 28, width - 92, 18);
         _countersLabel.AutoEllipsis = true;
 
-        _lastLabel.SetBounds(left, 48, 270, 18);
+        _lastLabel.SetBounds(left, 48, width, 18);
         _lastLabel.AutoEllipsis = true;
         _lastLabel.Click += OnLastClicked;
 
-        _queueLabel.SetBounds(282, 48, 88, 18);
+        _queueLabel.SetBounds(left + width - 88, 28, 88, 18); // right end of the counters line, so "Last" can use the full width
         _queueLabel.TextAlign = ContentAlignment.TopRight;
         _queueLabel.AutoEllipsis = true;
         _queueLabel.Visible = false;
