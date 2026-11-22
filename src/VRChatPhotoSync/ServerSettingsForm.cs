@@ -301,36 +301,50 @@ public sealed class ServerSettingsForm : Form
     }
 
     // ---- Layout ----
+    //
+    // Everything is placed by TableLayoutPanels and the form sizes itself to fit (AutoSize), so the window is laid out
+    // correctly at any display scale. Fixed sizes below are in 96-DPI units; AutoScaleMode.Font scales them, and the
+    // layout engine computes every position afterwards. Never position controls with hard-coded pixel coordinates here,
+    // and don't use MinimumSize on auto-sized controls (it ends up scaled twice at high DPI): give buttons a fixed Size.
 
-    private const int LeftX = 12, FieldX = 110, RightX = 468, FieldWidth = RightX - FieldX;
+    private const int FieldWidth = 360;
 
-    /// <summary>Stacks the rows below the test result, depending on which optional rows are shown.</summary>
+    private readonly TableLayoutPanel _root = new();
+    private readonly FlowLayoutPanel _keyRow = new();
+    private readonly FlowLayoutPanel _albumRow = new();
+    private readonly TableLayoutPanel _advancedTable = new();
+    private readonly FlowLayoutPanel _waitRow = new();
+    private readonly FlowLayoutPanel _buttonRow = new();
+
+    /// <summary>Shows or hides the optional rows; the table and the form resize themselves.</summary>
     private void Relayout()
     {
         SuspendLayout();
-        var y = _albumBox.Bottom + 10;
-        if (OffersUploadExisting)
-        {
-            _uploadExisting.SetBounds(LeftX, y, RightX - LeftX, 22);
-            y += 28;
-        }
-        _advancedLink.SetBounds(LeftX, y, RightX - LeftX, 18);
+        _uploadExisting.Visible = OffersUploadExisting;
         _advancedLink.Text = _advancedOpen ? AdvancedExpanded : AdvancedCollapsed;
         _advancedLink.LinkArea = new LinkArea(0, _advancedLink.Text.Length);
-        y += 24;
-        if (_advancedOpen)
-        {
-            _advancedPanel.SetBounds(LeftX, y, RightX - LeftX, 88);
-            y += 94;
-        }
-        _folderLabel.SetBounds(LeftX, y, RightX - LeftX, 18);
-        y += 20;
-        _vrchatConfigLink.SetBounds(LeftX, y, 200, 18);
-        y += 30;
-        _saveButton.SetBounds(RightX - 170, y, 80, 28);
-        _cancelButton.SetBounds(RightX - 80, y, 80, 28);
-        ClientSize = new Size(RightX + LeftX, y + 40);
-        ResumeLayout(false);
+        _advancedPanel.Visible = _advancedOpen;
+        ResumeLayout(true);
+    }
+
+    private static FlowLayoutPanel Flow(FlowLayoutPanel panel, FlowDirection direction = FlowDirection.LeftToRight)
+    {
+        panel.AutoSize = true;
+        panel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        panel.FlowDirection = direction;
+        panel.WrapContents = false;
+        panel.Margin = Padding.Empty;
+        panel.Padding = Padding.Empty;
+        return panel;
+    }
+
+    private static Label AutoLabel(Label label, string text)
+    {
+        label.AutoSize = true;
+        label.Text = text;
+        label.Anchor = AnchorStyles.Left;
+        label.Margin = new Padding(3, 6, 8, 3);
+        return label;
     }
 
     private void InitializeComponent()
@@ -345,91 +359,175 @@ public sealed class ServerSettingsForm : Form
         ShowInTaskbar = true;
         StartPosition = FormStartPosition.CenterParent;
         Text = "Immich server";
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        Padding = new Padding(9);
 
-        _urlLabel.SetBounds(LeftX, 15, 95, 18);
-        _urlLabel.Text = "Server URL:";
-        _urlBox.SetBounds(FieldX, 12, FieldWidth, 23);
+        // Server URL and API key
+        AutoLabel(_urlLabel, "Server URL:");
+        _urlBox.Width = FieldWidth;
+        _urlBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         _urlBox.PlaceholderText = "https://immich.example.com";
         _urlBox.TextChanged += (_, _) => UpdateHelpLink();
         _toolTip.SetToolTip(_urlBox, "The address you open Immich at. /api is added if it's missing.");
 
-        _keyLabel.SetBounds(LeftX, 45, 95, 18);
-        _keyLabel.Text = "API key:";
-        _keyBox.SetBounds(FieldX, 42, FieldWidth - 70, 23);
+        AutoLabel(_keyLabel, "API key:");
+        _keyBox.Width = FieldWidth - 76;
         _keyBox.UseSystemPasswordChar = true;
-        _showKey.SetBounds(RightX - 64, 41, 64, 25);
+        _keyBox.Margin = new Padding(3, 3, 6, 3);
+        _showKey.AutoSize = false;
         _showKey.Appearance = Appearance.Button;
         _showKey.TextAlign = ContentAlignment.MiddleCenter;
         _showKey.Text = "Show";
+        _showKey.Size = new Size(64, 25);
+        _showKey.Margin = new Padding(0, 2, 0, 2);
         _showKey.CheckedChanged += (_, _) => _keyBox.UseSystemPasswordChar = !_showKey.Checked;
         _toolTip.SetToolTip(_showKey, "Show the key you are typing. A saved key is never shown.");
+        Flow(_keyRow).Controls.AddRange([_keyBox, _showKey]);
 
-        _helpLink.SetBounds(FieldX, 70, FieldWidth, 18);
+        _helpLink.AutoSize = true;
         _helpLink.Text = "How do I get an API key?";
+        _helpLink.Margin = new Padding(3, 6, 3, 0);
         _helpLink.LinkClicked += OnHelpClicked;
 
-        _permissionsLabel.SetBounds(FieldX, 90, FieldWidth, 62);
+        _permissionsLabel.AutoSize = false;
+        _permissionsLabel.Size = new Size(FieldWidth, 62);
+        _permissionsLabel.Dock = DockStyle.Fill;
         _permissionsLabel.Text = ServerSettingsModel.RequiredPermissionsText;
         _permissionsLabel.ForeColor = SystemColors.GrayText;
 
-        _testButton.SetBounds(FieldX, 156, 120, 28);
+        _testButton.AutoSize = false;
         _testButton.Text = "Test connection";
+        _testButton.Size = new Size(120, 28);
         _testButton.Click += OnTestClicked;
-        _testResult.SetBounds(FieldX, 190, FieldWidth, 64);
+        _testResult.AutoSize = false;
+        _testResult.Size = new Size(FieldWidth, 48);
+        _testResult.Dock = DockStyle.Fill;
         _testResult.ForeColor = SystemColors.GrayText;
         _testResult.AutoEllipsis = true;
 
-        _albumLabel.SetBounds(LeftX, 265, 95, 18);
-        _albumLabel.Text = "Album:";
-        _albumBox.SetBounds(FieldX, 262, 240, 23);
+        // Album and the first-setup option
+        AutoLabel(_albumLabel, "Album:");
+        _albumBox.Width = 240;
+        _albumBox.Margin = new Padding(3, 3, 8, 3);
         _albumBox.PlaceholderText = "VRChat";
-        _albumHint.SetBounds(FieldX + 248, 265, FieldWidth - 248, 18);
+        _albumHint.AutoSize = true;
         _albumHint.Text = "(optional)";
         _albumHint.ForeColor = SystemColors.GrayText;
+        _albumHint.Margin = new Padding(0, 6, 0, 3);
         _toolTip.SetToolTip(_albumBox, "Uploaded photos are added to this album, which is created if needed. Leave blank for no album.");
+        Flow(_albumRow).Controls.AddRange([_albumBox, _albumHint]);
 
-        _uploadExisting.AutoEllipsis = true;
+        _uploadExisting.AutoSize = true;
+        _uploadExisting.Margin = new Padding(3, 6, 3, 3);
         _toolTip.SetToolTip(_uploadExisting,
             "Upload the photos already in the camera roll that the server doesn't have yet. Only offered on first setup; " +
             "later use ⋯ → Upload existing photos….");
 
+        // Advanced
+        _advancedLink.AutoSize = true;
+        _advancedLink.Margin = new Padding(3, 8, 3, 3);
         _advancedLink.LinkClicked += OnAdvancedClicked;
-        _advancedPanel.Visible = false;
 
-        _visibilityLabel.SetBounds(0, 5, 95, 18);
-        _visibilityLabel.Text = "Visibility:";
-        _visibilityBox.SetBounds(FieldX - LeftX, 2, 140, 23);
+        AutoLabel(_visibilityLabel, "Visibility:");
+        _visibilityBox.Width = 140;
         _visibilityBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _visibilityBox.Items.AddRange([AssetVisibility.Timeline, AssetVisibility.Archive, AssetVisibility.Hidden, AssetVisibility.Locked]);
         _toolTip.SetToolTip(_visibilityBox, "Where uploaded photos appear in Immich. Timeline is the normal choice.");
-        _waitLabel.SetBounds(0, 35, 95, 18);
-        _waitLabel.Text = "VRCX wait:";
-        _waitBox.SetBounds(FieldX - LeftX, 32, 60, 23);
+        AutoLabel(_waitLabel, "VRCX wait:");
+        _waitBox.Width = 60;
         _waitBox.Minimum = 0;
         _waitBox.Maximum = ServerSettingsModel.MaxVrcxWaitSeconds;
-        _waitHint.SetBounds(FieldX - LeftX + 66, 35, 200, 18);
+        _waitBox.Margin = new Padding(3, 3, 6, 3);
+        _waitHint.AutoSize = true;
         _waitHint.Text = "seconds (0 = don't wait)";
         _waitHint.ForeColor = SystemColors.GrayText;
+        _waitHint.Margin = new Padding(0, 6, 0, 3);
         _toolTip.SetToolTip(_waitBox, "How long to wait for VRCX to add its metadata to a new photo before uploading it.");
-        _strictNames.SetBounds(0, 62, RightX - LeftX, 22);
+        Flow(_waitRow).Controls.AddRange([_waitBox, _waitHint]);
+        _strictNames.AutoSize = true;
         _strictNames.Text = "Only exact VRChat file names (skip copies like \"… - Copy.png\")";
-        _advancedPanel.Controls.AddRange([_visibilityLabel, _visibilityBox, _waitLabel, _waitBox, _waitHint, _strictNames]);
 
+        _advancedTable.AutoSize = true;
+        _advancedTable.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _advancedTable.ColumnCount = 2;
+        _advancedTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _advancedTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _advancedTable.Margin = new Padding(12, 0, 0, 0);
+        _advancedTable.Controls.Add(_visibilityLabel, 0, 0);
+        _advancedTable.Controls.Add(_visibilityBox, 1, 0);
+        _advancedTable.Controls.Add(_waitLabel, 0, 1);
+        _advancedTable.Controls.Add(_waitRow, 1, 1);
+        _advancedTable.Controls.Add(_strictNames, 0, 2);
+        _advancedTable.SetColumnSpan(_strictNames, 2);
+        _advancedPanel.AutoSize = true;
+        _advancedPanel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _advancedPanel.Margin = Padding.Empty;
+        _advancedPanel.Controls.Add(_advancedTable);
+        _advancedPanel.Visible = false;
+
+        // Photo folder
+        _folderLabel.AutoSize = false;
+        _folderLabel.Height = 20;
+        _folderLabel.Dock = DockStyle.Fill;
         _folderLabel.AutoEllipsis = true;
+        _folderLabel.Margin = new Padding(3, 10, 3, 0);
+        _vrchatConfigLink.AutoSize = true;
         _vrchatConfigLink.Text = "Open VRChat config folder";
         _vrchatConfigLink.LinkClicked += OnVRChatConfigClicked;
         _toolTip.SetToolTip(_vrchatConfigLink, "The photo folder is set in VRChat. This opens the folder with VRChat's config.json.");
 
+        // Buttons
+        _saveButton.AutoSize = false;
+        _saveButton.Size = new Size(80, 28);
         _saveButton.Text = "Save";
         _saveButton.Click += OnSaveClicked;
+        _cancelButton.AutoSize = false;
+        _cancelButton.Size = new Size(80, 28);
         _cancelButton.Text = "Cancel";
         _cancelButton.DialogResult = DialogResult.Cancel;
         AcceptButton = _saveButton;
         CancelButton = _cancelButton;
+        Flow(_buttonRow, FlowDirection.RightToLeft).Controls.AddRange([_cancelButton, _saveButton]);
+        _buttonRow.Anchor = AnchorStyles.Right;
+        _buttonRow.Margin = new Padding(0, 12, 0, 0);
 
-        Controls.AddRange([_urlLabel, _urlBox, _keyLabel, _keyBox, _showKey, _helpLink, _permissionsLabel, _testButton, _testResult,
-            _albumLabel, _albumBox, _albumHint, _uploadExisting, _advancedLink, _advancedPanel, _folderLabel, _vrchatConfigLink,
-            _saveButton, _cancelButton]);
-        ResumeLayout(false);
+        // The table: a label column and a field column
+        _root.AutoSize = true;
+        _root.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _root.ColumnCount = 2;
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var row = 0;
+        void Pair(Control? label, Control field)
+        {
+            if (label is not null)
+                _root.Controls.Add(label, 0, row);
+            _root.Controls.Add(field, 1, row);
+            row++;
+        }
+        void Wide(Control control)
+        {
+            _root.Controls.Add(control, 0, row);
+            _root.SetColumnSpan(control, 2);
+            row++;
+        }
+        Pair(_urlLabel, _urlBox);
+        Pair(_keyLabel, _keyRow);
+        Pair(null, _helpLink);
+        Pair(null, _permissionsLabel);
+        Pair(null, _testButton);
+        Pair(null, _testResult);
+        Pair(_albumLabel, _albumRow);
+        Wide(_uploadExisting);
+        Wide(_advancedLink);
+        Wide(_advancedPanel);
+        Wide(_folderLabel);
+        Wide(_vrchatConfigLink);
+        Wide(_buttonRow);
+        _root.RowCount = row;
+
+        Controls.Add(_root);
+        ResumeLayout(true);
     }
 }
