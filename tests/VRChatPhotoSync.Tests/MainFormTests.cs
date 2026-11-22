@@ -36,7 +36,7 @@ public class MainFormTests
         {
             var vm = new MainViewModel(SetUp, @"D:\Photos\VRChat");
             using var form = new MainForm(new LiveConfig(SetUp, SetUp, _ => { }), vm, @"D:\Photos\VRChat", null);
-            Assert.Equal(new Size(360, 160), form.ClientSize);
+            Assert.Equal(new Size(380, 164), form.ClientSize);
             Assert.Equal(FormBorderStyle.FixedSingle, form.FormBorderStyle);
             Assert.Equal("PhotoSync — 0 uploaded", form.Text);
             Assert.Contains(form.Controls.OfType<Label>(), l => l.Text == MainViewModel.WatchingText);

@@ -633,13 +633,13 @@ public sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.Font;
         AutoScaleDimensions = new SizeF(7F, 15F);
         Font = new Font("Segoe UI", 9F);
-        ClientSize = new Size(360, 160);
+        ClientSize = new Size(380, 164);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         Text = MainViewModel.AppTitle;
 
-        const int left = 10, width = 340;
+        const int left = 10, width = 360;
 
         _statusLabel.SetBounds(left, 8, width, 18);
         _statusLabel.AutoEllipsis = true;
@@ -648,35 +648,35 @@ public sealed class MainForm : Form
         _countersLabel.SetBounds(left, 28, width, 18);
         _countersLabel.AutoEllipsis = true;
 
-        _lastLabel.SetBounds(left, 48, 250, 18);
+        _lastLabel.SetBounds(left, 48, 270, 18);
         _lastLabel.AutoEllipsis = true;
         _lastLabel.Click += OnLastClicked;
 
-        _queueLabel.SetBounds(262, 48, 88, 18);
+        _queueLabel.SetBounds(282, 48, 88, 18);
         _queueLabel.TextAlign = ContentAlignment.TopRight;
         _queueLabel.AutoEllipsis = true;
         _queueLabel.Visible = false;
 
-        _skipPrintsCheck.SetBounds(left, 74, 165, 22);
+        _skipPrintsCheck.SetBounds(left, 72, width, 22);
         _skipPrintsCheck.AutoEllipsis = true;
         _skipPrintsCheck.CheckedChanged += OnSkipPrintsChanged;
         _toolTip.SetToolTip(_skipPrintsCheck, "Don't upload VRChat prints (2048×1440 polaroids). Applies to new photos.");
 
-        _uploadLayersCheck.SetBounds(180, 74, 170, 22);
+        _uploadLayersCheck.SetBounds(left, 94, width, 22);
         _uploadLayersCheck.AutoEllipsis = true;
         _uploadLayersCheck.CheckedChanged += OnUploadLayersChanged;
         _toolTip.SetToolTip(_uploadLayersCheck, "Also upload the _Environment, _Player and _UI files of multi-layer photos.");
 
-        _serverButton.SetBounds(left, 120, 130, 28);
+        _serverButton.SetBounds(left, 126, 130, 28);
         _serverButton.Text = "Immich server…";
         _serverButton.Enabled = false;
         _serverButton.Click += (_, _) => OpenServerSettings?.Invoke();
 
-        _folderButton.SetBounds(146, 120, 110, 28);
+        _folderButton.SetBounds(146, 126, 110, 28);
         _folderButton.Text = "Open folder";
         _folderButton.Click += OnOpenFolder;
 
-        _moreButton.SetBounds(310, 120, 40, 28);
+        _moreButton.SetBounds(330, 126, 40, 28);
         _moreButton.Text = "⋯";
         _moreButton.Click += (_, _) => _moreMenu.Show(_moreButton, new Point(0, _moreButton.Height));
         _toolTip.SetToolTip(_moreButton, "More");
