@@ -62,7 +62,7 @@ public class ImmichClientTests
     [Fact]
     public void AppVersion_MatchesAssemblyVersionWithoutBuildMetadata()
     {
-        Assert.Equal("0.1.0", ImmichClient.AppVersion);
+        Assert.Equal("1.0.0", ImmichClient.AppVersion);
     }
 
     [Fact]

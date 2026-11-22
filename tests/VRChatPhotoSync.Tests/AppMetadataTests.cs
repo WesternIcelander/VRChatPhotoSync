@@ -22,10 +22,10 @@ public class AppMetadataTests
     [Fact]
     public void Version_IsSet()
     {
-        Assert.Equal(new Version(0, 1, 0, 0), App.GetName().Version);
+        Assert.Equal(new Version(1, 0, 0, 0), App.GetName().Version);
         var info = App.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         Assert.NotNull(info);
-        Assert.StartsWith("0.1.0", info);
+        Assert.StartsWith("1.0.0", info);
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class AppMetadataTests
         Assert.True(File.Exists(exe), $"Missing {exe}");
         var info = FileVersionInfo.GetVersionInfo(exe);
         Assert.Equal("VRChat PhotoSync", info.ProductName);
-        Assert.Equal("0.1.0.0", info.FileVersion);
+        Assert.Equal("1.0.0.0", info.FileVersion);
         using var icon = Icon.ExtractAssociatedIcon(exe);
         Assert.NotNull(icon);
     }
