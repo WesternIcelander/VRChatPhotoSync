@@ -263,19 +263,44 @@ public sealed class FolderWatcherTests : IDisposable
 
 public sealed class DebouncerTests
 {
+    // Timing rule for these tests (they run on slow, shared CI machines): never assert that something HAS happened
+    // after a fixed sleep. Poll until it happens (with a generous timeout), then wait a little longer only to check
+    // that nothing EXTRA happens. Assertions that something has NOT happened yet use a quiet period much longer
+    // than the gaps between triggers.
+
+    private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(10);
+
+    private static void WaitFor(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + WaitTimeout;
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+                Assert.Fail($"Timed out waiting for {what}.");
+            Thread.Sleep(20);
+        }
+    }
+
     [Fact]
     public void RepeatedTriggers_FireOnceAfterQuietPeriod()
     {
         var fired = new ConcurrentQueue<string>();
-        using var debouncer = new Debouncer<string>(TimeSpan.FromMilliseconds(150), fired.Enqueue);
+        var quiet = TimeSpan.FromMilliseconds(1000);
+        using var debouncer = new Debouncer<string>(quiet, fired.Enqueue);
 
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         for (int i = 0; i < 6; i++)
         {
             debouncer.Trigger("a");
             Thread.Sleep(50);
         }
-        Assert.Empty(fired); // still inside the quiet period after the last trigger
-        Thread.Sleep(600);
+        // Still inside the quiet period after the last trigger, unless this machine stalled for a whole second
+        // between two triggers; only check it when the loop ran in time, so a stall can't fail the test.
+        if (watch.Elapsed < quiet)
+            Assert.Empty(fired);
+
+        WaitFor(() => !fired.IsEmpty, "the debounced callback");
+        Thread.Sleep(quiet * 1.5); // nothing more should fire
         Assert.Equal(["a"], fired.ToArray());
         Assert.Equal(0, debouncer.PendingCount);
     }
@@ -284,7 +309,8 @@ public sealed class DebouncerTests
     public void Keys_AreIndependent_AndCancelWorks()
     {
         var fired = new ConcurrentQueue<string>();
-        using var debouncer = new Debouncer<string>(TimeSpan.FromMilliseconds(100), fired.Enqueue, StringComparer.OrdinalIgnoreCase);
+        var quiet = TimeSpan.FromMilliseconds(100);
+        using var debouncer = new Debouncer<string>(quiet, fired.Enqueue, StringComparer.OrdinalIgnoreCase);
 
         debouncer.Trigger("a");
         debouncer.Trigger("B");
@@ -292,7 +318,9 @@ public sealed class DebouncerTests
         debouncer.Trigger("c");
         Assert.True(debouncer.Cancel("C"));
         Assert.False(debouncer.Cancel("zzz"));
-        Thread.Sleep(600);
+
+        WaitFor(() => fired.Count >= 2, "both debounced callbacks");
+        Thread.Sleep(quiet * 5); // the cancelled "c" must still not fire
 
         // "B" and "b" are one key; the callback gets the most recent spelling.
         Assert.Equal(["a", "b"], fired.Order(StringComparer.Ordinal).ToArray());
