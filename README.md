@@ -97,6 +97,8 @@ VRCX adds a block of metadata (world, players in the instance) to each photo abo
 
 If VRCX edits a photo after it was already uploaded (for example because VRCX was slow), the new version is uploaded too. If the key has `asset.copy` and `asset.delete`, the new version takes over the old one's albums and favourite, and the old one is moved to the Immich trash (not deleted permanently). Without those permissions both versions are kept and the log says so.
 
+**Restarting VRCX while VRChat is running:** when VRCX starts, it re-reads the current VRChat log and adds its metadata again to every photo taken in that VRChat session, including photos that already have it. Because VRCX has only just started, this extra block usually has no world or player details. PhotoSync sees those photos change and replaces each one once, as above. Nothing is lost, but expect a few re-uploads (and trashed copies) after restarting VRCX mid-session.
+
 ## Starting it with VRCX
 
 VRCX's **App Launcher** can start PhotoSync whenever VRChat starts:

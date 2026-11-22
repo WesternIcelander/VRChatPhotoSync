@@ -408,21 +408,28 @@ How this list works:
 ---
 
 ## Manual verification (with the user, after the build items)
-These use `- ☐` so the run-plan workflow skips them. Real files come from `sample-photos\` (temporary, git-excluded).
+These use `- ☐` so the run-plan workflow skips them; `- ✔` marks a check done. Real files come from `sample-photos\` (temporary, git-excluded).
 
-- ☐ First run of the published exe from a fresh folder: the Immich server window opens. Set it up through the UI only, with a **dedicated key**. Check that the key in `config.json` is encrypted.
-- ☐ Test connection results: correct (✔), wrong key, an address that doesn't exist, a website that isn't Immich. Saving with the key box blank keeps the key.
-- ☐ "Also upload my N existing photos" on first setup, ticked (uploads) and unticked (only new photos). It is hidden once a key is saved.
-- ☐ Main window: the counters, "Last" click, Skip prints / Upload photo layers toggles, ⋯ menu items, title count.
-- ☐ Window behaviour: the X button with Hide to tray hides; Minimize to tray; Start minimized; `taskkill` (no `/F`) still exits.
-- ☐ Real photo in VRChat with VRCX running, the app watching the real camera roll: uploads after VRCX's chunk (check the wait time in the log; the downloaded asset has `Description`).
-- ☐ Real multi-layer photo: the combined photo uploads in about 1 s, and the layers follow the setting.
-- ☐ VRCX "modify filename" on: exactly one asset, under the `_wrld_…` name. (Turn the setting back off afterwards if wanted.)
-- ☐ Photo with VRCX closed: uploads after the 10 s timeout.
-- ☐ Watching the real camera roll: nothing under `Prints\`, `Stickers\` or `Emoji\` is queued (log).
-- ☐ VRCX App Launcher: a shortcut in `%AppData%\VRCX\startup\`. Start VRChat after VRCX → launched. Exit VRChat → killed, state intact, next start catches up.
-- ☐ Two VRChat clients: closing the first kills and relaunches PhotoSync. It starts cleanly, the session count continues, and a photo around the kill is uploaded.
+All 12 done with the user on 2026-11-21/22, using the published exe (a 200% display, a dedicated key, a test album, VRChat and VRCX running):
 
+- ✔ First run of the published exe from a fresh folder: the Immich server window opens. Set it up through the UI only, with a **dedicated key**. The key in `config.json` is DPAPI-encrypted (`ApiKeyProtected`, no plain key in the file).
+  - **Found and fixed:** at 200% display scale the Immich server window was half as wide as its contents and its bottom rows overlapped (rows were placed with fixed 96-DPI pixel coordinates after auto-scaling). It now uses auto-sizing `TableLayoutPanel`s and the app runs as `PerMonitorV2`. In the main window, "Upload photo layers (N skipped)" was cut off, so each checkbox now has its own row.
+- ✔ Test connection results: correct (✔ with the version and key name), wrong key (rejected), an address that isn't Immich. Saving with the key box blank keeps the key.
+- ✔ "Also upload my N existing photos" on first setup: N = 4 (the print excluded); ticked → all 4 uploaded and counted. It is hidden once a key is saved.
+- ✔ Main window: the counters, "Last" click (Explorer selects the file), Skip prints / Upload photo layers toggles, ⋯ menu items (Upload existing photos, Open log, Open Immich), Open folder, title count.
+- ✔ Window behaviour: the X button with Hide to tray hides; Minimize to tray; Start minimized (starts hidden in the tray); `taskkill` (no `/F`) still exits cleanly.
+- ✔ Real photo with VRCX running, watching the real camera roll: uploaded about 1.1 s after the photo, after VRCX's chunk; the uploaded SHA1 matches the final file, which has `Description`.
+- ✔ Real multi-layer photo: the combined photo uploaded about 1.1 s after it was saved (`SiblingExists`, no 10 s wait); all 3 layers followed the setting (on → uploaded).
+- ✔ VRCX "modify filename" on: exactly one asset, under the `_wrld_…` name; the short-lived original name was never queued.
+- ✔ Photo with VRCX closed: `TimedOut after 10.0 s`, then uploaded.
+- ✔ Watching the real camera roll: nothing under `Prints\`, `Stickers\` or `Emoji\` queued (the startup scan counts only the user's photos). No new files arrived in those folders during the session, so the live event case is covered by tests only.
+- ✔ VRCX App Launcher: a shortcut in `%AppData%\VRCX\startup\`; starting VRChat after VRCX launched it; exiting VRChat hard-killed it (no "stopping" line), `state.json` intact, the next start caught up.
+- ✔ Two VRChat clients: closing the first killed PhotoSync in the middle of an upload and VRCX relaunched it about 1 s later. It took over the abandoned mutex, continued the session, and the catch-up re-sent the photo (server: duplicate, so the first upload had completed; the photo is in Immich once).
+
+Findings from the manual checks (no code change needed):
+- **Restarting VRCX while VRChat runs** makes VRCX re-add a (mostly empty) `Description` chunk to every photo in the current VRChat log, even ones that already have one. PhotoSync then replaces those photos once (copy + trash). Documented in the README.
+- **A photo uploaded just before a kill** is counted as a duplicate (not an upload) by the next run, because the killed run never recorded it. Cosmetic only.
+- **Log noise:** while a file is being written, each `Changed` event queues it again, giving repeated `Queued` / `Skipped (unchanged)` lines. Harmless.
 Already verified during planning (2026-11-21):
 - ✔ VRCX delay (~1 s) and multi-layer file order measured live (`tools/watch-vrcx.ps1`).
 - ✔ The strict-name pattern over the whole camera roll: 614 files, only `- Copy.png` rejected.
